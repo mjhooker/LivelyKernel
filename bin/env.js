@@ -78,7 +78,7 @@ set("TEMP_DIR",        [env.TMP, env.TEMP, env.TMPDIR, env.TEMPDIR, '/tmp'], {us
 /*
  * server related stuff
  */
-set("LIFE_STAR_PORT",      [9001], {notFs: true});
+set("LIFE_STAR_PORT",      [3000], {notFs: true});
 set("LIFE_STAR_HOST",      ["localhost"], {notFs: true});
 // replace with "notesting" to disable test runner interface on server
 set("LIFE_STAR_TESTING",   ["testing"], {notFs: true});
