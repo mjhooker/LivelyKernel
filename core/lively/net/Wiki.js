@@ -66,6 +66,7 @@ Object.extend(lively.net.Wiki, {
     },
 
     findResourcePathsMatching: function(pattern, onlyExisiting, thenDo) {
+        if (typeof onlyExisiting === "function") { thenDo = onlyExisiting; onlyExisiting = true; }
         var query = {pathPatterns: [pattern], attributes: ['path', 'change', 'date'], newest: true, orderBy: 'date'};
         if (onlyExisiting) query.exists = true;
         this.getRecords(query, function(err, records) {
@@ -102,6 +103,195 @@ Object.extend(lively.net.Wiki, {
             var jso;
             try { jso = jsoFromHTML(content) } catch(e) { iterator(e, next, path); return; }
             iterator(null, next, path, jso);
+        }, thenDo);
+    },
+
+    showLoginInfo: function(withInfoMorphDo) {
+        lively.require("lively.net.tools.Wiki").toRun(function() {
+            var m = lively.BuildSpec("lively.wiki.LoginInfo")
+                .createMorph().openInWorldCenter().comeForward();
+            withInfoMorphDo && withInfoMorphDo(null, m);
+        });
+    },
+
+    openResourceList: function(resources, options, thenDo) {
+        if (!thenDo && typeof options === 'function') { thenDo = options; options = {}; }
+        options = options || {};
+
+        var title = options.title || resources.join(", ").truncate(80);
+        var nGroups = 0;
+        var grouped = groupResources(resources);
+
+        var container = makeContainer();
+
+        if (grouped.partsbin && grouped.partsbin.length) {
+            nGroups++;
+            var partItemList = makeList("partsList"),
+                partItems = createPartItemList(grouped.partsbin),
+                label1 = makeLabel("PartsBin items");
+            partItems.forEach(function(ea) { ea.hasOwnListItemBehavior = true; partItemList.addMorph(ea); });
+            container.addMorph(label1);
+            container.addMorph(partItemList);
+        }
+
+        // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+        if (grouped.world && grouped.world.length) {
+            nGroups++;
+            var list = makeList("worldsList");
+            setStringList(grouped.world, list);
+            container.addMorph(makeLabel("Worlds"));
+            container.addMorph(list);
+            lively.bindings.connect(list, 'selection', {visitWorld: function(morph) {
+                $world.confirm("open world " + morph.item.value + '?', function(input) {
+                    if (input) window.open(Global.URL.root.withFilename(morph.item.value).toString() , '_blank');
+                });
+            }}, 'visitWorld');
+        }
+
+        // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+        if (grouped.module && grouped.module.length) {
+            nGroups++;
+            var list = makeList("moduleList");
+            setStringList(grouped.module, list);
+            container.addMorph(makeLabel("Modules and files"));
+            container.addMorph(list);
+            lively.bindings.connect(list, 'selection', {open: function(morph) {
+                lively.ide.browse(morph.item.value);
+            }}, 'open');
+        }
+
+        // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+        if (grouped.other && grouped.other.length) {
+            nGroups++;
+            var list = makeList("miscList");
+            setStringList(grouped.other, list);
+            container.addMorph(makeLabel("Other resources"));
+            container.addMorph(list);
+            lively.bindings.connect(list, 'selection', {open: function(morph) {
+                lively.ide.openFile(Global.URL.root.withFilename(morph.item.value));
+            }}, 'open');
+        }
+
+        if (nGroups === 0) {
+            nGroups++;
+            container.addMorph(makeLabel("You have no resources yet"));
+        }
+
+        container.setExtent(pt(630, (140+20)*nGroups));
+        container.setVisible(false);
+        container.openInWorld();
+
+        (function() {
+            container.openInWindow({title: "Resources of " + title})
+            container.applyLayout();
+            container.setVisible(true);
+            thenDo(null, container.getWindow());
+        }).delay(0);
+
+
+        // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+        // helper
+        // -=-=-=-
+
+        function makeContainer() {
+            var container = lively.morphic.Morph.makeRectangle(0,0, 630, 20);
+            container.setLayouter({type: "vertical"})
+            container.getLayouter().setSpacing(5)
+            container.applyStyle({fill: Global.Color.white})
+            return container;
+        }
+
+        function makeLabel(string) {
+            var label = lively.morphic.Text.makeLabel(string);
+            label.emphasizeAll({fontWeight: 'bold'});
+            return label;
+        }
+
+        function makeList(name) {
+            var list = new lively.morphic.MorphList()
+            list.setLayouter({type: 'tiling'})
+            list.getLayouter().setSpacing(10);
+            list.setExtent(lively.pt(630.0,140));
+            list.name = name;
+            return list
+        }
+
+        function groupResources(resources) {
+            var parts = resources.grep(/\.(metainfo|json)$/).map(noExtension).uniq();
+            return resources.groupBy(function(ea) {
+                if (parts.include(noExtension(ea))) return "partsbin"
+                if (ea.endsWith(".html")) return "world";
+                if (ea.endsWith(".js")) return "module";
+                return "other";
+            });
+        }
+
+        function noExtension(name) { return name.replace(/\.[^\.]$/, ""); }
+
+        function setStringList(listItems, list) {
+            var items = listItems.map(function(path) { return {isListItem: true, value: path, string: path}; })
+            list.setList(items);
+            list.getItemMorphs().forEach(function(ea) {
+                ea.setWhiteSpaceHandling("nowrap")
+                return ea.fitThenDo(function() {})
+            });
+        }
+
+        function createPartItemList(partResources) {
+            return partResources
+                .map(function(ea) { return ea.replace(/\.[^\.]+$/, ''); }).uniq()
+                .map(function(ea) {
+                    return {partsSpace: ea.slice(0, ea.lastIndexOf('/')),
+                            name: ea.slice(ea.lastIndexOf('/') + 1)};
+                })
+                .map(function(ea) {
+                    var item = {
+                        isListItem: true,
+                        value: lively.PartsBin.getPartItem(ea.name, ea.partsSpace).asPartsBinItem(),
+                        string: ea.name,
+                    }
+                    item.value.item = item;
+                    item.value.disableGrabbing();
+                    return item.value;
+                });
+        }
+    },
+
+    getTimemachineBaseURL: function() {
+      return URL.root.withFilename('timemachine/');
+    },
+
+    revertToVersion: function(path, versionInfo, thenDo) {
+      var tmURL = lively.net.Wiki.getTimemachineBaseURL(),
+          getURL = tmURL.withFilename(versionInfo.date + '/').withFilename(path),
+          putURL = URL.root.withFilename(path);
+      lively.lang.fun.composeAsync(
+        function(n) {
+          getURL.asWebResource()
+            .createProgressBar('reverting ' + path).enableShowingProgress()
+            .beAsync().get().whenDone(function(content, status) {
+              n(status.isSuccess() ? null :
+                new Error('Revert of ' + path + ' failed while getting content:\n' + status), content); });
+        },
+        function(content, n) {
+          putURL.asWebResource()
+            .createProgressBar('reverting ' + path).enableShowingProgress()
+            .beAsync().put(content).whenDone(function(_, status) {
+              n(status.isSuccess() ? null :
+                new Error('Revert of ' + path + ' failed while writing content:\n' + status));
+          });
+        })(thenDo);
+    },
+
+    revertResources: function(resourcePaths, versionInfo, thenDo) {
+      // lively.net.Wiki.urlToPath("PartsBin/Basic/Rectangle.json")
+      resourcePaths
+        .map(lively.net.Wiki.urlToPath)
+        .mapAsyncSeries(function(path, i, next) {
+          lively.net.Wiki.revertToVersion(path, versionInfo, next);
         }, thenDo);
     }
 

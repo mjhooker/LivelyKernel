@@ -20,12 +20,12 @@ lively.ide.tests.CodeEditor.Base.subclass('lively.ide.tests.CodeEditorTextLayer'
         els.forEach(function(el, i) {
             var overlay = overlayMarker.overlays[i],
                 style = Global.getComputedStyle(el),
-                left = Number(style.left.replace(/[^0-9]+/g, '')),
+                left = Number(style.left.replace(/[^0-9\.]+/g, '')),
                 expectedLeft = layerConfig.padding + (layerConfig.characterWidth * positions[i].column),
-                top = Number(style.top.replace(/[^0-9]+/g, '')),
+                top = Number(style.top.replace(/[^0-9\.]+/g, '')),
                 expectedTop = layerConfig.offset + (layerConfig.lineHeight * positions[i].row);
-            this.assertEquals(expectedLeft, left, 'left');
-            this.assertEquals(expectedTop, top, 'top');
+            this.assertEquals(expectedLeft.toFixed(1), left.toFixed(1), 'left');
+            this.assertEquals(expectedTop.toFixed(1), top.toFixed(1), 'top');
         }, this);
     },
     assertRenderedOverlayText: function(texts, overlayMarker) {

@@ -1,3 +1,5 @@
+/*global require, process, __dirname*/
+
 var fs           = require("fs"),
     path         = require("path"),
     zlib         = require('zlib'),
@@ -8,22 +10,12 @@ var fs           = require("fs"),
     fuser;
 
 function determineCoreFiles() {
-    // bootstrap.js - libsFile
-    var libsFile = 'core/lib/lively-libs-debug.js';
-    // bootstrap.js - bootstrapFiles
-    var bootstrapFiles = [
-        'core/lively/Migration.js', 'core/lively/JSON.js', 'core/lively/lang/Object.js',
-        'core/lively/lang/Function.js', 'core/lively/lang/String.js', 'core/lively/lang/Array.js',
-        'core/lively/lang/Number.js', 'core/lively/lang/Date.js', 'core/lively/lang/Worker.js',
-        'core/lively/lang/LocalStorage.js', 'core/lively/defaultconfig.js', 'core/lively/Base.js',
-        'core/lively/ModuleSystem.js'
-    ];
-    // bootstrap.js - bootstrapModules
-    var bootstrapModules = ['lively.lang.Closure', 'lively.bindings', 'lively.Main'];
-    // defaultconfig.js - modulesBeforeWorldLoad
-    bootstrapModules.push('lively.morphic.HTML');
-    // defaultconfig.js - modulesOnWorldLoad
-    bootstrapModules.push('lively.ide', 'lively.IPad', 'lively.net.SessionTracker', 'lively.net.Wiki');
+    var cfg = lively.Config,
+        libsFile = 'core/lib/lively-libs-debug.js',
+        bootstrapFiles = cfg.get("bootstrapFiles"),
+        modulesToInclude = cfg.get("bootstrapModules")
+          .concat(cfg.get("modulesBeforeWorldLoad"))
+          .concat(cfg.get("modulesOnWorldLoad"));
 
     function moduleToFile(module) {
         // TODO: Adapt module load logic
@@ -36,16 +28,16 @@ function determineCoreFiles() {
         return absFile;
     }
 
-    var coreFiles = bootstrapModules.map(moduleToFile).reverse();
+    var coreFiles = modulesToInclude.map(moduleToFile).reverse();
 
     var i = 0;
     var dependencies = {};
+
+    // rk 2014-10-25: Uuhhh ha, this looks like an ad-hoc parsing adventure...
     while (i < coreFiles.length) {
         var filename = coreFiles[i];
         if (dependencies[filename]) {
-            dependencies[filename].forEach(function(dep) {
-                coreFiles.splice(i + 1, 0, dep);
-            });
+            dependencies[filename].forEach(function(dep) { coreFiles.splice(i + 1, 0, dep); });
             i++;
             continue;
         }
@@ -64,9 +56,7 @@ function determineCoreFiles() {
                     deps.push(filename);
                 });
             }
-        } catch (e) {
-            console.log('Problems processing: ' + filename);
-        }
+        } catch (e) { console.log('Problems processing: ' + filename); }
         i++;
     }
 
@@ -78,6 +68,16 @@ function determineCoreFiles() {
 
     coreFiles = [libsFile].concat(bootstrapFiles).concat(coreFiles);
     return coreFiles;
+}
+
+function moduleToFile(module) {
+    // TODO: Adapt module load logic
+    var relFile = 'core/' + module.replace(/\./g, '/') + '.js';
+    var absFile = path.join(directory, relFile);
+    if (fs.existsSync(absFile)) return absFile;
+    relFile = module.replace(/\./g, '/') + '.js';
+    absFile = path.join(directory, relFile);
+    return absFile;
 }
 
 (function setup() {

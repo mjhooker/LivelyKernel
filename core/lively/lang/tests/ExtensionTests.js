@@ -96,12 +96,12 @@ TestCase.subclass('lively.lang.tests.ExtensionTests.PropertiesTest',
 'testing', {
     testAll: function() {
         var expected, result;
-        expected = ["a", "c"];
+        expected = ["a","c"];
         result = Properties.all(this.sut, function (name, object) {
             return name.length == 1;
         });
         this.assertMatches(expected, result);
-        expected = ["aa", "cc"];
+        expected = ["aa","cc"];
         result = Properties.all(this.sut, function (name, object) {
             return name.length == 2;
         });
@@ -176,6 +176,11 @@ TestCase.subclass('lively.lang.tests.ExtensionTests.PropertyPath',
         var obj = {}, p = lively.PropertyPath('foo.bar.baz');
         p.set(obj, 3, true);
         this.assertEquals(3, obj.foo.bar.baz);
+    },
+    testEnsureOverwritesString: function() {
+        var obj = {foo: "b a r"}, p = lively.PropertyPath('foo.b a r.baz');
+        p.set(obj, 3, true);
+        this.assertEqualState({foo: {"b a r": {baz: 3}}}, obj);
     },
     testSplitter: function() {
         var obj = {}, p = lively.PropertyPath('foo/bar/baz', '/');
@@ -474,11 +479,7 @@ TestCase.subclass('lively.lang.tests.ExtensionTests.ArrayTest', {
         this.assertMatches({x: 'baz'}, [{x: 'bar'},{x: 'foo'}, {x: 'baz'}].max(function(ea) { return ea.x.charCodeAt(2); }));
     },
 
-    testInspect: function() {
-        var obj = {a: 23, inspect: function() { return "<" + this.a + ">"; }};
-        var arr = ["foo", obj, 42];
-        this.assertEquals('[foo, <23>, 42]', arr.inspect());
-    },
+
 
     testSwap: function() {
         var arr = ['a', 'b', 'c', 'd', 'e'];
@@ -1098,7 +1099,54 @@ AsyncTestCase.subclass('lively.lang.tests.ExtensionTests.Function',
         (function foo() { return $super() + 23; }).asScriptOf(obj);
         this.assertEquals(26, obj.foo());
         this.done();
-    }
+    },
+
+    testOnce: function() {
+        var c = 0;
+        function counter(arg1) { c++; return arg1 + c; }
+        var once = Functions.once(counter);
+        once(22); once();
+        this.assertEquals(1, c);
+        this.assertEquals(23, once());
+        this.done();
+    },
+
+    testExtractBody: function() {
+        var code = Functions.extractBody(function code() {
+            var obj = {
+                foo: function(arg1, arg2) {
+                    // This is a comment!
+                    return 123
+                }
+            }
+        });
+        var expected = "var obj = {\n"
+                     + "    foo: function(arg1, arg2) {\n"
+                     + "        // This is a comment!\n"
+                     + "        return 123\n"
+                     + "    }\n"
+                     + "}";
+        this.assertEquals(expected, code);
+        this.done();
+    },
+
+    testEither: function() {
+        var aRun = false, bRun = false, cRun = false;
+        var either = Functions.either(
+            function() { aRun = true; },
+            function() { bRun = true; },
+            function() { cRun = true; });
+        setTimeout(either[0], 100);
+        setTimeout(either[1], 40);
+        setTimeout(either[2], 80);
+
+        this.delay(function() {
+            this.assert(!aRun, "a ran");
+            this.assert(bRun, "b didn't ran");
+            this.assert(!cRun, "c ran");
+            this.done();
+        }, 150);
+    },
 });
 
 TestCase.subclass('lively.lang.tests.ExtensionTests.NumbersTest',

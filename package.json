@@ -13,12 +13,17 @@
     "async": "~0.2",
     "colorize": "~0.1",
     "file-fuser": ">=0.0.6",
-    "life_star": ">=0.5.2",
+    "life_star": ">=0.6.6",
     "optparse": "~1.0",
     "shelljs": "~0.2",
     "sqlite3": "~2.2.3",
     "watch": "~0.8.0",
-    "websocket": "1.0.8"
+    "websocket": "1.0.8",
+    "lively-loader": "https://github.com/LivelyKernel/node-lively-loader/tarball/master",
+    "lively.lang": "git://github.com/LivelyKernel/lively.lang.git#master",
+    "ace.improved": "git://github.com/rksm/ace.improved.git#master",
+    "paredit.js": "git://github.com/rksm/paredit.js.git#master",
+    "nrepl-client": "git://github.com/rksm/node-nrepl-client.git#master"
   },
   "scripts": {
     "test": "$npm_node_execpath bin/lk-test.js",

@@ -95,7 +95,7 @@ lively.morphic.tests.HTMLText.TestCase.subclass('lively.morphic.tests.HTMLText.T
 
         var events1 = lively.$._data(this.text.firstTextChunk().getChunkNode(), "events");
         // jQuery decides whether it implements mouseenter/leave with
-        // mouseover/out or directly with menter/leave
+        // mouseover/out or directly with mouseenter/leave
         this.assertEquals(1, (events1.mouseover || events1.mouseenter).length);
         this.assertEquals(1, (events1.mouseout || events1.mouseleave).length);
 

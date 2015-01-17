@@ -576,6 +576,22 @@ main.logCompletion("main").delay(Config.mainDelay);\n\
         this.assertEquals(result[0].startIndex, 0);
         this.assertEquals(result[0].stopIndex, src.length-1);
     },
+    
+    testParseModuleDefWithLineBreaksInRequireArgs: function() {
+        var src = "module('lively.BetterScripting').\n" +
+                  "requires('lively.TileScripting',\n" +
+                  "         'lively.MoreScripting').\n" +
+                  "toRun(\n" +
+                  "function(lively.ide.tests.FileParserTests) {\n\nMorph.addMethods({})\n});";
+
+        var result = this.sut.parseSource(src);
+
+        this.assertEquals(result.length, 1);
+        this.assertEquals(result[0].type, 'moduleDef');
+        this.assertEquals(result[0].name, 'lively.BetterScripting');
+        this.assertEquals(result[0].startIndex, 0);
+        this.assertEquals(result[0].stopIndex, src.length-1);
+    },
 
       testParseModuleAndClass: function() {
         var src = 'module(\'lively.xyz\').requires(\'abc.js\').toRun(function(lively.ide.tests.FileParserTests) {\n\Object.subclass(\'Abcdef\', {\n}); // this is a comment\n});';
@@ -1051,7 +1067,7 @@ lively.ide.tests.FileParserTests.JsParserTest.subclass('lively.ide.tests.FilePar
             '}); // end of module';
         this.root = this.db.prepareForMockModule('foo.js', this.src);
         // If we are called multiple times, don't forget about the original SourceControl
-        if(!lively.ide.SourceControl.hasOwnProperty("putSourceCodeFor")) this.oldDB = lively.ide.SourceControl;
+        if(lively.ide.SourceControl && !lively.ide.SourceControl.hasOwnProperty("putSourceCodeFor")) this.oldDB = lively.ide.SourceControl;
         else debugger;
         lively.ide.SourceControl = this.db;
     },

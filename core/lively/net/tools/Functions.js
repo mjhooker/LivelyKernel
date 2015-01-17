@@ -77,18 +77,9 @@ Object.extend(lively.net.tools.Functions, {
     },
 
     openWorkspaceForSession: function(session) {
-        var worldURL = session.worldURL, user = session.user,
-            workspace = lively.BuildSpec('lively.net.tools.Lively2LivelyWorkspace').createMorph();
+        var workspace = lively.BuildSpec('lively.net.tools.Lively2LivelyWorkspace').createMorph();
         workspace.openInWorldCenter().comeForward();
-        (function() {
-            workspace.targetMorph.showNameInput();
-            (function() {
-                var sel = workspace.get('ConnectionInput').getList().detect(function(item) {
-                    return item.value.user === user && item.value.worldURL === worldURL;
-                });
-                workspace.get('ConnectionInput').setSelection(sel);
-            }).delay(.5);
-        }).delay(0);
+        workspace.targetMorph.selectTargetSession(session);
     },
 
     openWorldPreview: function(session, title) {
@@ -217,7 +208,6 @@ Object.extend(lively.net.tools.Functions, {
         }
 
         localSession.getSessions(function(remotes) {
-
             var sessions = Object.keys(remotes).map(function(trackerId) {
                 return Object.keys(remotes[trackerId]).map(function(sessionId) {
                     return remotes[trackerId][sessionId];
@@ -233,6 +223,14 @@ Object.extend(lively.net.tools.Functions, {
 
             thenDo(null, sorted);
         }, localSession);
+    },
+
+    withTrackerSessionsDo: function(localSession, thenDo, forceRefresh) {
+        URL.nodejsBase.withFilename("SessionTracker/sessions/default-flattened")
+            .asWebResource().beAsync().get().withJSONWhenDone(function(sessions, status) {
+                var trackers = sessions.filter(function(sess) { return sess.type === 'tracker'; });
+                thenDo(null, trackers);
+            });
     },
 
     visitWorldOfSession: function(session) {

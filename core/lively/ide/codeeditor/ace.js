@@ -1,15 +1,46 @@
-module('lively.ide.codeeditor.ace').requires('lively.Network'/*to setup lib*/).requiresLib({url: Config.codeBase + (false && lively.useMinifiedLibs ? 'lib/ace/lively-ace.min.js' : 'lib/ace/lively-ace.js'), loadTest: function() { return typeof ace !== 'undefined';}}).toRun(function() {
+var aceLoaded = false;
+
+var libs = [{
+  url: Config.codeBase + 'lib/ace/lively-ace.js',
+  loadTest: function() { return typeof ace !== 'undefined';}
+}, {
+  url: Config.codeBase + 'lib/ace/ace.improvements.js',
+  loadTest: function() { return Global.ace && ace.improved; }
+}, {
+  url: Config.codeBase + 'lib/ace/ace.ext.lang.ast-commands.js',
+  loadTest: function() { return lively.lang.Path("ext.lang.astCommands").get(ace); }
+}, {
+  url: Config.codeBase + 'lib/ace/ace.ext.lang.codemarker.js',
+  loadTest: function() { return lively.lang.Path("ext.lang.codemarker").get(ace); }
+}, {
+  url: Config.codeBase + 'lib/ace/ace.ext.custom-text-attributes.js',
+  loadTest: function() { return !!ace.require('ace/mode/attributedtext'); }
+}, {
+  url: Config.codeBase + 'lib/ace/ace.ext.keys.js',
+  loadTest: function() { return ace.ext && !!ace.ext.keys; }
+}];
+
+lively.lang.arr.mapAsyncSeries(libs,
+  function(lib, _, n) { JSLoader.loadJs(lib.url); lively.lang.fun.waitFor(lib.loadTest, n); },
+  function(err) { err && console.error(err); aceLoaded = true; });
+
+module('lively.ide.codeeditor.ace').requires('lively.Network'/*to setup lib*/).requiresLib({loadTest: function() { return !!aceLoaded; }}).toRun(function() {
 
 (function configureAce() {
-    ace.config.set("workerPath", URL.codeBase.withFilename('lib/ace/').fullPath());
+    ace.config.set("basePath", URL.root.withFilename("core/lib/ace/").toString());
+    ace.config.set("modePath", URL.root.withFilename("core/lib/ace/").toString());
     // disable currently broken worker
     ace.require('ace/edit_session').EditSession.prototype.setUseWorker(false);
+    
+    // no Ctrl-Shift-Space
+    ace.require("ace/autocomplete").Autocomplete.startCommand.bindKey = "Ctrl-Space|Alt-Shift-Space|Alt-Space";
 })();
 
 module('lively.ide');
 
 Object.extend(lively.ide, {
     ace: Object.extend(ace, {
+
         modules: function(optPrefix, shorten) {
             // return ace modules, optionally filtered by optPrefix. If shorten is
             // true remove optPrefix from name
@@ -21,42 +52,23 @@ Object.extend(lively.ide, {
             return moduleNames.map(function(ea) {
                 return ea.substring(optPrefix.length); })
         },
-    
-        // currently supported:
-        // "abap", "clojure", "coffee", "css", "dart", "diff", "haml", "html",
-        // "jade", "java", "javascript", "json", "latex", "less", "lisp",
-        // "makefile", "markdown", "objectivec", "python", "r", "rdoc", "sh",
-        // "sql", "svg", "text", "xml"
-        // available but not loaded by default are:
-        // "asciidoc", "c9search", "c_cpp", "coldfusion", "csharp", "curly",
-        // "dot", "glsl", "golang", "groovy", "haxe", "jsp", "jsx", "liquid",
-        // "lua", "luapage", "lucene", "ocaml", "perl", "pgsql", "php",
-        // "powershell", "rhtml", "ruby", "scad", "scala", "scss", "stylus",
-        // "tcl", "tex", "textile", "typescript", "vbscript", "xquery", "yaml"
-    
+
+        customTextModes: [],
         availableTextModes: function() {
             return lively.ide.ace.modules('ace/mode/', false)
-                .select(function(moduleName) { return !!ace.require(moduleName).Mode })
-                .map(function(name) { return name.substring('ace/mode/'.length); });
+                .select(function(moduleName) { var mod = ace.require(moduleName); return mod && !!mod.Mode; })
+                .map(function(name) { return name.substring('ace/mode/'.length); })
+                .concat(ace.customTextModes || []).uniq();
         },
-    
+
+
         moduleNameForTextMode: function(textModeName) {
             return this.availableTextModes().include(textModeName) ?
                 'ace/mode/' + textModeName : null;
         },
-    
-        // supported:
-        // "ambiance", "monokai", "chrome", "pastel_on_dark", "textmate",
-        // "solarized_dark", "twilight", "tomorrow", "tomorrow_night",
-        // "tomorrow_night_blue", "tomorrow_night_bright", "eclipse"
-        // not loaded by default are:
-        // "xcode", "vibrant_ink", "tomorrow_night_eighties",
-        // "tomorrow_night_bright", "tomorrow_night_blue", "solarized_light",
-        // "mono_industrial", "merbivore_soft", "merbivore", "kr", "idle_fingers",
-        // "github", "dreamweaver", "dawn", "crimson_editor", "cobalt",
-        // "clouds_midnight", "clouds", "chaos"
-        availableThemes: function() { return this.modules('ace/theme/', true) },
-    
+
+        availableThemes: function() { return this.modules('ace/theme/', true).compact() },
+
         moduleNameForTheme: function(themeName) {
             return this.availableThemes().include(themeName) ?
                 "ace/theme/" + themeName : null
@@ -86,9 +98,9 @@ Object.extend(lively.ide, {
 });
 
 (function acePatches() {
+
+    // auto close "{", https://github.com/LivelyKernel/LivelyKernel/issues/197
     var CstyleBehaviour = lively.ide.ace.require('ace/mode/behaviour/cstyle').CstyleBehaviour;
-    // CstyleBehaviour = origCstyleBehaviour
-    // origCstyleBehaviour = CstyleBehaviour
     var oop = lively.ide.ace.require('ace/lib/oop')
     var LivelyCstyleBehaviour = function() {
         this.inherit(CstyleBehaviour);
@@ -148,17 +160,18 @@ Object.extend(lively.ide, {
     Object.extend(LivelyCstyleBehaviour, CstyleBehaviour);
     oop.inherits(LivelyCstyleBehaviour, CstyleBehaviour);
     lively.ide.ace.require('ace/mode/behaviour/cstyle').CstyleBehaviour = LivelyCstyleBehaviour;
-    
-    if (UserAgent.fireFoxVersion /* UserAgent.isMozilla is also true for Chrome */) {
+
+    if (UserAgent.fireFoxVersion || UserAgent.isMozilla /* UserAgent.isMozilla is also true for Chrome */) {
         var cssOverrides = document.createElement("style");
         cssOverrides.textContent = "\n/* ACE CSS Workarounds for Firefox */" +
                 ["div.ace_scrollbar",
                  "div.ace_gutter", "div.ace_layer.ace_cursor-layer",
                  "div.ace_layer.ace_text-layer", "div.ace_layer.ace_marker-layer",
                  "div.ace_marker-layer .ace_bracket"].inject("\n", function (css, next) {
-            return css + next + " { z-index: 0; }\n"
+            return css + next + " { z-index: 0 !important; }\n"
         });
         document.head.insertBefore(cssOverrides, document.head.firstChild);
     }
 })();
+
 }); // end of module

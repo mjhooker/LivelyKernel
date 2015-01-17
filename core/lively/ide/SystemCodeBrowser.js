@@ -202,7 +202,7 @@ lively.ide.BasicBrowser.subclass('lively.ide.SystemBrowser',
     },
 
     commands: function() {
-        // lively.ide.BrowserCommand.allSubclasses().collect(function(ea) { return ea.type}).join(',\n')
+        // lively.ide.classes().filter(function(ea) { return ea.isSubclassOf(lively.ide.BrowserCommand); }).pluck("type").join(',\n')
         return [
             // lively.ide.BrowseWorldCommand,
             lively.ide.AddNewFileCommand,
@@ -287,7 +287,7 @@ Object.extend(lively.ide, {
         // 3. path (String) relative to URL.root, optional browser instance
 
         var args = Array.from(arguments);
-        if (args.length === 0) { this.openSystemCodeBrowser(); return }
+        if (args.length === 0) { this.openSystemCodeBrowser(); return; }
         if (args.length <= 2) { // url or path or options object
             var url = args[0].toString().startsWith('http:') ?
                 new URL(args[0]) : URL.root.withFilename(args[0]);
@@ -337,17 +337,18 @@ Object.extend(lively.ide, {
     },
 
     browseURL: function(url, browser) {
+        var path = lively.ide.sourceDB().mapURLToRelativeModulePaths(url);
+        if (url.isLeaf() && !lively.ide.sourceDB().addModule(path).exists())
+            return lively.ide.openFile(url);
+
         browser = browser || this.openSystemCodeBrowser();
         if (url.isLeaf()) {
             var dir = url.getDirectory(),
                 fileName = url.filename();
             browser.setTargetURL(dir);
             browser.selectNodeMatching(function(node) {
-                return node && node.url && node.url().filename() == fileName;
-            })
-        } else {
-            browser.setTargetURL(url);
-        }
+                return node && node.url && node.url().filename() == fileName; });
+        } else browser.setTargetURL(url);
         browser.panel.getWindow().comeForward();
         return browser;
     },

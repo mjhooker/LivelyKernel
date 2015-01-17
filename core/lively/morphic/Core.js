@@ -48,9 +48,9 @@ Object.subclass('lively.morphic.Morph',
 
 },
 'accessing -- morph properties', {
-    setPosition: function(value) {
+    setPosition: function(pt) {
         this.cachedBounds = null;
-        return this.morphicSetter('Position', value);
+        return this.morphicSetter('Position', pt);
     },
     getPosition: function () {
         var pos = this.morphicGetter('Position') || pt(0,0);
@@ -428,6 +428,21 @@ Object.subclass('lively.morphic.Morph',
         otherMorph.setPosition(pos);
         o.addMorph(otherMorph, nextMorph);
         return otherMorph;
+    },
+
+    swapWith: function(morph2) {
+      var morph1 = this;
+
+      var owner1 = morph1.owner, idx1 = owner1.submorphs.indexOf(morph1),
+          next1 = owner1.submorphs[idx1+1], pos1 = morph1.bounds().center();
+      var owner2 = morph2.owner, idx2 = owner2.submorphs.indexOf(morph2),
+          next2 = owner2.submorphs[idx2+1], pos2 = morph2.bounds().center();
+      morph1.align(pos1, pos2);
+      morph2.align(pos2, pos1);
+      if (owner1 !== owner2) {
+        morph1.remove(); morph2.remove()
+        owner1 && owner1.addMorph(morph2, next1);
+        owner2 && owner2.addMorph(morph1, next2); }
     }
 
 },
@@ -699,7 +714,6 @@ Object.subclass('lively.morphic.Morph',
         return lively.$(this.jQueryNode());
     }
 });
-
 lively.morphic.Morph.subclass('lively.morphic.World',
 'properties', {
     style: {
@@ -717,16 +731,26 @@ lively.morphic.Morph.subclass('lively.morphic.World',
     isWorld: true
 },
 'accessing -- morphic relationship', {
+    draggedMorphs: function() {
+        return this.hands.map(function (hand) { return hand.draggedMorph }).filter(function (ea) { return ea });
+    },
+
     addMorph: function($super, morph, optMorphBefore) {
         // my first hand is almost the topmost morph
         var r = $super(morph, optMorphBefore);
-        $super(this.firstHand());
+        this.hands.forEach(function(hand) {
+            $super(hand);
+        })
         return r;
     }
 },
 'accessing', {
     world: function() { return this },
-    firstHand: function() { return this.hands && this.hands[0] },
+    firstHand: function() {
+        return this.hands && (this.hands.find(function(hand) {
+          return typeof hand.pointerId !== 'undefined' }) || this.hands[0])
+    },
+
     windowBounds: function(optWorldDOMNode) {
         if (this.cachedWindowBounds) return this.cachedWindowBounds;
         var canvas = optWorldDOMNode || this.renderContext().getMorphNode(),
@@ -735,7 +759,7 @@ lively.morphic.Morph.subclass('lively.morphic.World',
             scale = 1 / this.getScale(),
             topLeft = pt(body.scrollLeft - (canvas.offsetLeft || 0), body.scrollTop - (canvas.offsetTop || 0)),
             width, height;
-        if (UserAgent.isTouch){
+        if (UserAgent.isTouch || UserAgent.isMobile){
             width = window.innerWidth * scale;
             height = window.innerHeight * scale;
         } else {
@@ -748,7 +772,21 @@ lively.morphic.Morph.subclass('lively.morphic.World',
     visibleBounds:  function () {
         // the bounds call seems to slow down halos...
         return this.windowBounds().intersection(this.innerBounds());
+    },
+
+    isFullscreen: function() {
+        return !!document.fullscreenElement
+            || !!document.webkitFullscreenElement
+            || !!document.mozFullScreenElement;
+    },
+
+    requestFullscreen: function() {
+        var n = this.renderContext().morphNode;
+        if (n.requestFullscreen) { n.requestFullscreen(); }
+        else if (n.webkitRequestFullscreen) { n.webkitRequestFullscreen(); }
+        else if (n.mozRequestFullScreen) { n.mozRequestFullScreen(); }
     }
+
 },
 'rendering', {
     displayOnDocument: function(doc) {
@@ -872,6 +910,14 @@ Object.subclass('lively.morphic.Script',
         try {
             this.execute()
         } catch(e) {
+            // mr 2014-05-11: e.unwindException has to be used because e is unwrapped when rewritten
+            if (lively.Config.get('loadRewrittenCode') && e.unwindException && e.unwindException.isUnwindException) {
+                require('lively.ast.StackReification', 'lively.ast.Debugging').toRun(function() {
+                    var cont = lively.ast.Continuation.fromUnwindException(e.unwindException);
+                    lively.ast.openDebugger(cont.currentFrame, e.toString());
+                });
+            }
+
             alert('Error executing script ' + this + ': ' + e + '\n' + e.stack);
             return;
         }

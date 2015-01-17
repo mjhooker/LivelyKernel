@@ -14,23 +14,35 @@
 // FM: patch do not replace existing globals
 // JL: patch add displayName to functions
 // possible problems with Traits / Mixin Usage
-Object.extend = function(destination, source) {
-    for (var property in source) {
-        if (destination === Global && Global.hasOwnProperty(property)) {
-            console.warn('Global already has a property "' + property + '". If needed, it should be set directly and explicitly, not through the use of extend()');
+Object.extend = function(destination /* ... */) {
+    var currentCategoryNames = null;
+    for (var i = 1; i < arguments.length; i++) {
+        if (typeof arguments[i] == "string") {
+            var catName = arguments[i];
+            if (!destination.categories) destination.categories = {};
+            if (!destination.categories[catName]) destination.categories[catName] = [];
+            currentCategoryNames = destination.categories[catName];
+            continue;
         }
-        var getter = source.__lookupGetter__(property),
-            setter = source.__lookupSetter__(property);
-        if (getter) destination.__defineGetter__(property, getter);
-        if (setter) destination.__defineSetter__(property, setter);
-        if (getter || setter) continue;
-        var sourceObj = source[property];
-        destination[property] = sourceObj;
-        if (sourceObj instanceof Function) {
-            if ((!sourceObj.name || (sourceObj.name.length == 0)) && !sourceObj.displayName) sourceObj.displayName = property;
-            // remember the module that contains the class def
-            if (typeof lively !== 'undefined' && lively.Module && lively.Module.current)
-                sourceObj.sourceModule = lively.Module.current();
+        var source = arguments[i];
+        for (var property in source) {
+            if (destination === Global && Global.hasOwnProperty(property)) {
+                console.warn('Global already has a property "' + property + '". If needed, it should be set directly and explicitly, not through the use of extend()');
+            }
+            var getter = source.__lookupGetter__(property),
+                setter = source.__lookupSetter__(property);
+            if (getter) destination.__defineGetter__(property, getter);
+            if (setter) destination.__defineSetter__(property, setter);
+            if (getter || setter) continue;
+            var sourceObj = source[property];
+            destination[property] = sourceObj;
+            if (currentCategoryNames) currentCategoryNames.push(property);
+            if (sourceObj instanceof Function) {
+                if ((!sourceObj.name || (sourceObj.name.length == 0)) && !sourceObj.displayName) sourceObj.displayName = property;
+                // remember the module that contains the class def
+                if (typeof lively !== 'undefined' && lively.Module && lively.Module.current)
+                    sourceObj.sourceModule = lively.Module.current();
+            }
         }
     }
     return destination;
@@ -61,7 +73,15 @@ Object.extend(Object, {
     },
 
     clone: function(object) {
-        return Array.isArray(object) ? object.clone() : Object.extend({}, object);
+        var newObj;
+        if (Array.isArray(object))
+            newObj = object.clone();
+        else {
+            newObj = {};
+            for (var attr in object)
+                newObj[attr] = object[attr];
+        }
+        return newObj;
     },
 
     isElement: function(object) {
@@ -135,15 +155,12 @@ Object.extend(Object, {
     valuesInPropertyHierarchy: function(obj, name) {
         // lookup all properties named name in the proto hierarchy of obj
         // also uses Lively's class structure
-        var result = [],
-            lookupObj = obj;
-        while (true) {
-            if (lookupObj.hasOwnProperty(name)) result.push(lookupObj[name])
-            var proto = lively.Class.getPrototype(lookupObj);
-            if (!proto || proto === lookupObj) proto = lively.Class.getSuperPrototype(lookupObj);
-            if (!proto) return result.reverse();
-            lookupObj = proto;
+        var result = [], lookupObj = obj;
+        while (lookupObj) {
+            if (lookupObj.hasOwnProperty(name)) result.unshift(lookupObj[name])
+            lookupObj = Object.getPrototypeOf(lookupObj);
         }
+        return result;
     },
 
     mergePropertyInHierarchy: function(obj, propName) {
@@ -319,7 +336,7 @@ Global.Objects = {
         }
     },
 
-    equal: function(a, b) {
+    equals: function(a, b) {
         if (!a && !b) return true;
         if (!a || !b) return false;
         switch (a.constructor) {
@@ -328,12 +345,12 @@ Global.Objects = {
             case Boolean:
             case Number: return a == b;
         };
-        if (Object.isFunction(a.isEqualNode)) return a.isEqualNode(b);
-        if (Object.isFunction(a.equals)) return a.equals(b);
+        if (typeof a.isEqualNode === "function") return a.isEqualNode(b);
+        if (typeof a.equals === "function") return a.equals(b);
         function cmp(left, right) {
             for (var name in left) {
-                if (left[name] instanceof Function) continue;
-        	    if (!Objects.equal(left[name], right[name])) return false;
+                if (typeof left[name] === "function") continue;
+          	    if (!Objects.equals(left[name], right[name])) return false;
             }
             return true;
         }
@@ -516,7 +533,7 @@ Object.extend(lively.PropertyPath.prototype, {
         var parent = obj
         for (var i = 0; i < this._parts.length-1; i++) {
             var part = this._parts[i];
-            if (parent.hasOwnProperty(part)) {
+            if (parent.hasOwnProperty(part) && Object.isObject(parent[part]) || Object.isArray(parent[part])) {
                 parent = parent[part];
             } else if (ensure) {
                 parent = parent[part] = {};

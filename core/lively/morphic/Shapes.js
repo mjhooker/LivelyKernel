@@ -88,7 +88,7 @@ Object.subclass('lively.morphic.Shapes.Shape',
 });
 
 lively.morphic.Shapes.Shape.subclass('lively.morphic.Shapes.Rectangle');
-
+lively.morphic.Shapes.Rectangle.subclass('lively.morphic.Shapes.ReactShape');
 lively.morphic.Shapes.Shape.subclass('lively.morphic.Shapes.Ellipse');
 
 lively.morphic.Shapes.Shape.subclass('lively.morphic.Shapes.Image',
@@ -96,9 +96,7 @@ lively.morphic.Shapes.Shape.subclass('lively.morphic.Shapes.Image',
     initialize: function($super, bounds, url) {
         $super(bounds);
         this.isLoaded = false; // will be set to true as soon as image is really loaded
-        if (url) {
-            this.setImageURL(url);
-        }
+        if (url) this.setImageURL(url);
     },
 },
 'accessing', {

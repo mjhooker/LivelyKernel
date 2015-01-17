@@ -761,7 +761,7 @@ ObjectLinearizerPlugin.subclass('ClosurePlugin',
         Properties.forEachOwn(closures, function(name, closure) {
             // we defer the recreation of the actual function so that all of the
             // function's properties are already deserialized
-            if (closure instanceof lively.Closure) {
+            if (closure && closure.isLivelyClosure) {
                 // obj[name] = closure.recreateFunc();
                 obj.__defineSetter__(name, function(v) { delete obj[name]; obj[name] = v });
                 // in case the method is accessed or called before we are done with serializing
@@ -1294,7 +1294,7 @@ Object.extend(lively.persistence.Serializer, {
 Object.subclass('lively.persistence.HTMLDocBuilder',
 'initializing', {
     initialize: function() {
-        this.doc = document.implementation.createHTMLDocument();
+        this.doc = document.implementation.createHTMLDocument("Argument not optional. Thanks IE.");
         this.$doc = lively.$(this.doc);
         this.head = this.$doc.find('head');
         if (this.head.length === 0) {

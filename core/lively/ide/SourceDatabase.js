@@ -31,10 +31,12 @@ Object.subclass('lively.ide.ModuleWrapper',
 
 },
 'accessing', {
-    type: function() { return this._type },
-    ast: function() { return this._ast },
-    isVirtual: function() { return this._isVirtual },
-    moduleName: function() { return this._moduleName },
+
+    type: function() { return this._type; },
+    ast: function() { return this._ast; },
+    isVirtual: function() { return this._isVirtual; },
+    moduleName: function() { return this._moduleName; },
+
     fileURL: function() {
         //    works for core modules only:
         //    return URL.codeBase.withFilename(this.fileName())
@@ -43,30 +45,36 @@ Object.subclass('lively.ide.ModuleWrapper',
         //    might work for both, but slower
         return new URL(this.module().findUri(this.type()));
     },
-    module: function() {
-        return lively.module(this._moduleName);
-    },
-    fileName: function() {
-        return this.module().relativePath(this.type());
+
+    module: function() { return lively.module(this._moduleName); },
+    fileName: function() { return this.module().relativePath(this.type()); },
+
+    exists: function() { return this.isVirtual() || this.getSource() !== this.couldNodeGetSourceWarning(); },
+
+    couldNodeGetSourceWarning: function() {
+        return "could not retrieve source for " + this.fileURL();
     },
 
     getSourceUncached: function() {
         if (this.isVirtual()) return this._cachedSource;
         var webR = new WebResource(this.fileURL());
         if (this.forceUncached) webR.forceUncached();
-        this._cachedSource = webR.get().content || '';
+        webR.beSync().get();
+        if (!webR.status.isSuccess()) return this.couldNodeGetSourceWarning();
+        this._cachedSource = webR.content || '';
         this.lastModifiedDate = webR.lastModified;
         return this._cachedSource;
-    },
+    }
+,
 
     setCachedSource: function(source) { this._cachedSource = source },
 
     getSource: function() {
         return this._cachedSource ? this._cachedSource : this.getSourceUncached();
     },
-    getSourceFragment: function(startIdx, endIdx) {
-        return this.getSource().slice(startIdx, endIdx);
-    }
+
+    getSourceFragment: function(startIdx, endIdx) { return this.getSource().slice(startIdx, endIdx); }
+
 },
 'parsing', {
 
@@ -121,9 +129,7 @@ Object.subclass('lively.ide.ModuleWrapper',
         this.queuedRequests.push(this.setSource.curry(source, beSync, checkForOverwrites));
     },
 
-    removeQueuedRequests: function() {
-        this.queuedRequests = [];
-    },
+    removeQueuedRequests: function() { this.queuedRequests = []; },
 
     runQueuedRequest: function() {
         if (this.queuedRequests && this.queuedRequests.length > 0) {
@@ -142,8 +148,8 @@ Object.subclass('lively.ide.ModuleWrapper',
 
         var webR = new WebResource(this.fileURL());
         this.networkRequestInProgress = true;
-        lively.bindings.connect(webR, 'status', this, 'handleSaveStatus', {converter: function() {
-            return this.sourceObj; }});
+        lively.bindings.connect(webR, 'status', this, 'handleSaveStatus', {
+            converter: function() { return this.sourceObj; }});
 
         var putOptions = {};
         if (checkForOverwrites) {
@@ -153,14 +159,23 @@ Object.subclass('lively.ide.ModuleWrapper',
     },
 
     handleSaveStatus: function(webR) {
-        if (!webR.status.isDone()) return;
-        this.networkRequestInProgress = false;
-        if (webR.status.code() === 412) {
-            this.askToOverwrite(webR.status.url);
-        } else if (webR.status.isSuccess()) {
-            this.lastModifiedDate = webR.lastModified;
-            this.runQueuedRequest();
+        var status = webR.status,
+            world = lively.morphic.World.current();
+        if (status.isDone()) {
+            this.networkRequestInProgress = false;
+            if (status.code() === 412) {
+                this.askToOverwrite(status.url);
+            } else if (status.isSuccess()) {
+                this.lastModifiedDate = webR.lastModified;
+                this.runQueuedRequest();
+            } else if (status.isForbidden()) {
+                world.createStatusMessage('Saving to:\n' + status.url + '\nis not allowed!', {
+                    openAt: 'center', fill: Color.red, extent: pt(400, 75),
+                    removeAfter: 5000 //, textStyle: { align: 'center' }
+                });
+            }
         }
+        return webR;
     },
 
     askToOverwrite: function(url) {
@@ -184,6 +199,14 @@ Object.subclass('lively.ide.ModuleWrapper',
         new WebResource(this.fileURL()).del();
     }
 
+},
+'browsing', {
+    browseIt: function() {
+        show(String(this.fileURL()))
+        debugger;
+        lively.ide.browse("http://localhost:9001/core/lively/config.json")
+        lively.ide.browse(String(this.fileURL()));
+    }
 });
 lively.ide.ModuleWrapper.subclass('lively.ide.FileWrapper',
 'documentation', {
@@ -236,7 +259,8 @@ Object.extend(lively.ide.ModuleWrapper, {
         // FIXME FIXME FIXME
         while (moduleName.substring(0, 3) === '../') moduleName = moduleName.substring(3); // remove relative parts
         moduleName = moduleName.substring(0, moduleName.lastIndexOf('.')); // remove file extension like .js
-        moduleName = moduleName.replace(/\//g, '.'); // remove double slashes
+        moduleName = moduleName.replace(/\./g, "\\.");
+        moduleName = moduleName.replace(/\//g, '.'); // "/" -> "."
         try {
             return new lively.ide.ModuleWrapper(moduleName, type, null, isVirtual);
         } catch(e) {
@@ -459,36 +483,26 @@ Object.subclass('AnotherSourceDatabase', {
     },
 
     interestingLKFileNames: function(url) {
-        try {
-            var webR = new WebResource(url).beSync(),
-                fileURLs = webR.getSubElements().subDocuments.collect(function(ea) { return ea.getURL(); });
-            
-            return this.selectUniqueLKFileNamesFrom(fileURLs);
-        } catch(e) {
-            console.error('interestingLKFileNames: ' + e);
-            return [];
+        var webR = new WebResource(url).beSync().getSubElements(),
+            fileURLs = webR.subDocuments.concat(webR.subCollections).invoke("getURL");
+        return fileURLs.map(this.mapURLToRelativeModulePaths.bind(this))
+                       .filter(this.canBeDisplayedInSCB.bind(this)).uniq();
+    },
+
+    canBeDisplayedInSCB: function(url) {
+        var matcher = /.*\.(st|js|ometa|css|snippets?|tmsnippets?)|(\/)$/;
+        return matcher.test(String(url));
+    },
+
+    mapURLToRelativeModulePaths: function(url) {
+        var path = url.withRelativePartsResolved().relativePathFrom(URL.root);
+        if (path.startsWith('core/')) {
+            path = path.slice('core/'.length);
+        } else {
+            if (!path.startsWith('/')) path = '/' + path;
+            path = '..' + path;
         }
-    },
-    selectUniqueLKFileNamesFrom: function(fileURLs) {
-        var fileNames = this.mapURLsToRelativeModulePaths(fileURLs),
-            acceptedFileNames = /.*\.(st|js|ometa|css|snippets?|tmsnippets?)$/;
-    
-        return fileNames
-            .select(function(ea) { return acceptedFileNames.test(ea); })
-            .uniq();
-    },
-    
-    mapURLsToRelativeModulePaths: function(urls) {
-        return urls.collect(function(ea) {
-            var path = ea.withRelativePartsResolved().relativePathFrom(URL.root);
-            if (path.startsWith('core/')) {
-                path = path.slice('core/'.length);
-            } else {
-                if (!path.startsWith('/')) path = '/' + path;
-                path = '..' + path;
-            }
-            return path;
-        });
+        return path;
     }
 
 

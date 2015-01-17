@@ -30,98 +30,34 @@ module('lively.Data').requires('lively.OldModel').toRun(function(thisModule) {
 
 // FIX for IE9+
 if (typeof XPathResult == 'undefined') {
-    // constant values taken from Safari implementation (XPath 3.0)
-    Object.subclass('XPathResult', { });
-    Object.extend(XPathResult, {
-        ANY_TYPE: 0,
-        ANY_UNORDERED_NODE_TYPE: 8,
-        BOOLEAN_TYPE: 3,
-        FIRST_ORDERED_NODE_TYPE: 9,
-        NUMBER_TYPE: 1,
-        ORDERED_NODE_ITERATOR_TYPE: 5,
-        ORDERED_NODE_SNAPSHOT_TYPE: 7,
-        STRING_TYPE: 2,
-        UNORDERED_NODE_ITERATOR_TYPE: 4,
-        UNORDERED_NODE_SNAPSHOT_TYPE: 6
-    });
-}
-
-// FIX for IE9+
-Object.subclass('XPathEmulator', {
-    initialize: function() {
-        this.xmlDom = new ActiveXObject('MSXML2.DOMDocument.6.0');
-        this.xmlDom.setProperty('SelectionLanguage', 'XPath');
-    },
-
-    evaluate: function(expr, node, nsResolver) {
-        this.xmlDom.setProperty("SelectionNamespaces", (typeof nsResolver == 'function' ? this.createNSResolver() : nsResolver));
-
-        var queryObj;
-        try {
-            if (node.selectNodes('*')) queryObj = node;
-        } catch(e) {
-            queryObj = this.xmlDom;
-            if (node.outerHTML) {
-                this.xmlDom.loadXML(node.outerHTML);
-            } else if (node.ownerDocument.documentElement === node) {
-                var serializer = new XMLSerializer();
-                this.xmlDom.loadXML(serializer.serializeToString(node));
-            } else {
-                this.xmlDom.loadXML(node.ownerDocument.documentElement.outerHTML);
-                queryObj = this.xmlDom.selectSingleNode('//*[@id="' + node.id + '"]');
-            }
-        }
-
-        return new XPathEmulatorResult(node, queryObj, expr);
-    },
-
-    createNSResolver: function(ctx) {
-        var ns = '';
-        Properties.forEachOwn(Namespace, function(key, value) { ns += 'xmlns:' + key.toLowerCase() + '="' + value + '" '; });
-        return ns;
-    }
-});
-
-// FIX for IE9+
-Object.subclass('XPathEmulatorResult', {
-    initialize: function(origNode, queryObj, expr) {
-        this.sourceNode = origNode;
-        this.result = queryObj.selectNodes(expr);
-        this.length = this.result.length;
-        this.pointer = 0;
-    },
-
-    iterateNext: function() {
-        if (this.pointer >= this.length) return undefined;
-
-        var res = this.result[this.pointer];
-        // sync with original source
-        if (this.sourceNode.ownerDocument && (Global.document == this.sourceNode.ownerDocument)) {
-            var doc = this.sourceNode.ownerDocument,
-            nodeNoStack = [],
-            curNode = res;
-            while (curNode.parentNode) {
-                var i = 0;
-                while (curNode.previousSibling) {
-                    curNode = curNode.previousSibling;
-                    if (curNode.nodeType != 8) i++;
+    JSLoader.loadJs(Config.codeBase + 'lib/wgxpath.install.js', undefined, true);
+    XPathEvaluator = (function () {
+        return {
+            createNSResolver: function(ctx) {
+                if (ctx.ownerDocument) {
+                    if (!ctx.ownerDocument.createNSResolver) {
+                        wgxpath.install({document: ctx.ownerDocument});
+                    }
+                    var result = ctx.ownerDocument.createNSResolver(ctx);
+                    result.__doc = ctx.ownerDocument;
+                    return result;
+                } else {
+                    console.warn("Got a ctx without ownerDocument. Shouldn't happen!")
+                    return document.createNSResolver(ctx);
                 }
-                nodeNoStack.push(i);
-                curNode = curNode.parentNode;
+            },
+            evaluate: function(expression, node, nsResolver, type, arg) {
+                if (nsResolver.__doc) {
+                    nsResolver.__doc.evaluate(expression, node, nsResolver, type, arg);
+                } else {
+                    console.warn("Got a nsResolver without __doc. Shouldn't happen!")
+                    return document.evaluate(expression, node, nsResolver, type, arg);
+                }
             }
-            nodeNoStack.pop();
-
-            res = document.documentElement;
-            while (nodeNoStack.length > 0)
-            res = (res.children ?
-                Array.from(res.children)[nodeNoStack.pop()] :
-                Array.from(res.childNodes)[nodeNoStack.pop()]);
         }
-
-        this.pointer += 1;
-        return res;
-    }
-});
+    });
+    wgxpath.install();
+}
 
 if (!Global.View) Object.subclass("View");
 
@@ -129,8 +65,7 @@ View.subclass('Query',  {
     documentation: "Wrapper around XPath evaluation",
 
     xpe: Global.XPathEvaluator ? new XPathEvaluator()
-         : (UserAgent.isIE ? (console.log('XPath not available, emulating...') || new XPathEmulator())
-           : (console.log('XPath not available') || {})),
+         : (console.log('XPath not available') || {}),
 
     formals: ["+Results", // Node[]
         "-ContextNode", // where to evaluate

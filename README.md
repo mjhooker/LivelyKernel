@@ -2,7 +2,7 @@
 
 Lively Web is browser-based runtime and development environment that makes creation of (Web) applications much more immediate and direct. All development happens "live", i.e. you change your application and the system while it is running. This is not only more fun than tedious compile/test/reload workflows but also much faster.
 
-- See [Dan Ingall's talk from JS Conf '12](http://blip.tv/play/g_MngvTbawI.html?p=1) for a first impression.
+- See [Dan Ingall's talk from JS Conf '12](http://youtu.be/QTJRwKOFddc) for a first impression.
 - To get started, dive into the [interactive Lively-101 world](http://lively-web.org/users/robertkrahn/Lively-101.html).
 - To get your own online workspace [follow the "How To" instructions here](http://lively-web.org/welcome.html).
 
@@ -25,7 +25,7 @@ development follow the steps below.
 
 1. Make sure you have [node.js](http://nodejs.org/download/) installed.
 2. Checkout this repository: `$ git clone https://github.com/LivelyKernel/LivelyKernel`.
-2. Start the server: `$ cd LivelyKernel; npm start`
+3. Start the server: `$ cd LivelyKernel; npm start`
 
 Lively should now be running at [localhost:9001](http://localhost:9001/welcome.html).
 

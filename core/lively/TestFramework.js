@@ -385,8 +385,8 @@ Object.subclass('TestCase',
     },
     doMouseEvent: function(spec) {
         // cs: this should be moved to lively.morphic.tests.TestCase
-        // type one of click, mousedown, mouseup, mouseover, mousemove, mouseout.
-        if (!spec.type) spec.type = 'mousedown';
+        // type one of click, pointerdown, pointerup, pointerover, pointermove, pointerout.
+        if (!spec.type) spec.type = 'pointerdown';
         if (!spec.pos) spec.pos = pt(0,0);
         if (!spec.button) spec.button = 0;
         var targetMorphOrNode = spec.target;
@@ -492,28 +492,27 @@ TestCase.subclass('AsyncTestCase',
     delay: function(func, ms) {
         var self = this;
         console.log('Scheduled action for ' + self.currentSelector);
-        (function() {
+        setTimeout(function() {
             console.log('running delayed action for ' + self.currentSelector);
             try { func.call(self) } catch(e) { self.done(); self.addAndSignalFailure(e) }
-        }).delay(ms / 1000)
+        }, ms);
     },
     waitFor: function(guardFunc, interval, callback) {
         var self = this;
         console.log('Scheduled wait for ' + self.currentSelector);
-        (function() {
+        var i = setInterval(function() {
             try {
                 if (guardFunc.call(self)) {
+                    clearInterval(i);
                     callback.call(self);
-                } else {
-                    if (!self.isDone()) {
-                        self.waitFor(guardFunc, interval, callback);
-                    }
-                }
+                } else if (self.isDone())
+                    clearInterval(i);
             } catch(e) {
+                clearInterval(i);
                 self.done();
                 self.addAndSignalFailure(e);
             }
-        }).delay(interval / 1000)
+        }, interval);
     },
     runTest: function(aSelector) {
         if (!this.shouldRun) return;
@@ -696,7 +695,8 @@ Object.subclass('TestSuite', {
     },
 
     runDelayed: function() {
-        var testCaseClass = this.testClassesToRun.shift();
+        var self = this,
+            testCaseClass = this.testClassesToRun.shift();
 
         if (!testCaseClass) {
             this.runFinished && this.runFinished(); return }
@@ -708,9 +708,9 @@ Object.subclass('TestSuite', {
         testCase.setTestSelectorFilter(this.testSelectorFilter);
         this.showProgress && this.showProgress(testCase);
 
-        (function() {
-            testCase.runAllThenDo(Functions.Null, this.runDelayed.bind(this))
-        }).bind(this).delay(0);
+        setTimeout(function() {
+            testCase.runAllThenDo(Functions.Null, self.runDelayed.bind(self))
+        }, 0);
     }
 });
 

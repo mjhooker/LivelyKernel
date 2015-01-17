@@ -58,6 +58,9 @@ function getObjectForCompletion(evalFunc, stringToEval, thenDo) {
     if (idx >= 0) {
         startLetters = stringToEval.slice(idx+1);
         stringToEval = stringToEval.slice(0,idx);
+    } else {
+        startLetters = stringToEval;
+        stringToEval = 'Global';
     }
     var completions = [];
     try {
@@ -80,13 +83,14 @@ function propertyExtract(excludes, obj, extractor) {
 
 function getMethodsOf(excludes, obj) {
     return propertyExtract(excludes, obj, function(key) {
-        if (obj.__lookupGetter__(key) || typeof obj[key] !== 'function') return null;
+
+        if ((obj.__lookupGetter__ && obj.__lookupGetter__(key)) || typeof obj[key] !== 'function') return null;
         return {name: key, completion: signatureOf(key, obj[key])}; })
 }
 
 function getAttributesOf(excludes, obj) {
     return propertyExtract(excludes, obj, function(key) {
-        if (!obj.__lookupGetter__(key) && typeof obj[key] === 'function') return null;
+        if ((obj.__lookupGetter__ && !obj.__lookupGetter__(key)) && typeof obj[key] === 'function') return null;
         return {name: key, completion: key}; })
 }
 
@@ -102,9 +106,12 @@ function getDescriptorOf(originalObj, proto) {
         return s.replace(/\n/g, '').replace(/\s+/g, ' ');
     }
 
+    var stringified;
+    try { stringified = String(originalObj); } catch (e) { stringified = "{/*...*/}"; }
+
     if (originalObj === proto) {
-        if (typeof originalObj !== 'function') return shorten(originalObj.toString(), 50);
-        var funcString = originalObj.toString(),
+        if (typeof originalObj !== 'function') return shorten(stringified, 50);
+        var funcString = stringified,
             body = shorten(funcString.slice(funcString.indexOf('{')+1, funcString.lastIndexOf('}')), 50);
         return signatureOf(originalObj.displayName || originalObj.name || 'function', originalObj) + ' {' + body + '}';
     }
@@ -162,7 +169,7 @@ function getCompletions(evalFunc, string, thenDo) {
         objectCompletions = completions.slice(0,2)
         expected = [["[object Object]", ["m1(a)","m2(x)","a"]],
                     ["prototype", ["m3(a,b,c)"]]]
-        assert(Objects.equal(expected, objectCompletions), 'compl not equal');
+        assert(Objects.equals(expected, objectCompletions), 'compl not equal');
         alertOK('all good!')
 
     }
@@ -190,34 +197,18 @@ function getCompletions(evalFunc, string, thenDo) {
         var completions = completionSpec.completions;
         var prefix = completionSpec.prefix;
         var ed = this.textMorph;
+
         var candidates = completions.reduce(function(candidates, protoGroup) {
             var protoName = protoGroup[0], completions = protoGroup[1];
             return candidates.concat(completions.map(function(completion) {
                 return {
                     isListItem: true,
-                    string: '[' + protoName + '] ' + completion,
+                    string: '[' + protoName.truncate(50) + '] ' + completion,
                     value: complete.curry(completion)
                 }
             }));
         }, []);
-        function complete(completion) {
-            if (prefix && prefix.length) {
-                var sel = ed.aceEditor.selection;
-                if (sel.isBackwards()) sel.setRange(sel.getRange(), false/*reverse*/);
-                sel.clearSelection();
-                var range = ed.aceEditor.find({needle: prefix, backwards: true, preventScroll: true})
-                ed.replace(range, '');
-            }
-            var id = completion.match(/^[^\(]+/)[0];
-            var needsBrackets = !lively.Class.isValidIdentifier(id);
-            if (needsBrackets) {
-                var range = ed.aceEditor.find({needle: '.', backwards: true, preventScroll: true})
-                ed.replace(range, '');
-                if (!completion.match(/^[0-9]+$/)) completion = Strings.print(completion);
-                completion = '[' +  completion + ']';
-            }
-            ed.printObject(ed.aceEditor, completion, true);
-        };
+
         lively.ide.tools.SelectionNarrowing.getNarrower({
             name: 'lively.morphic.Text.ProtocolLister.CompletionNarrower',
             setup: function(narrower) {
@@ -231,6 +222,28 @@ function getCompletions(evalFunc, string, thenDo) {
                 actions: [{name: 'insert completion', exec: function(candidate) { candidate(); }}]
             }
         });
+
+        // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+        function complete(completion) {
+          if (prefix && prefix.length) {
+              var sel = ed.aceEditor.selection;
+              if (sel.isBackwards()) sel.setRange(sel.getRange(), false/*reverse*/);
+              sel.clearSelection();
+              var range = ed.aceEditor.find({needle: prefix, backwards: true, preventScroll: true})
+              ed.replace(range, '');
+          }
+          var id = completion.match(/^[^\(]+/)[0];
+          var needsBrackets = !lively.Class.isValidIdentifier(id);
+          if (needsBrackets) {
+            var pos = ed.getCursorPositionAce();
+            var beforeRange = {start: lively.lang.obj.merge(pos, {column:pos.column-1}), end: pos};
+            if (ed.getTextRange(beforeRange) === '.') ed.replace(beforeRange, '');
+            if (!completion.match(/^[0-9]+$/)) completion = Strings.print(completion);
+            completion = '[' +  completion + ']';
+          }
+          ed.printObject(ed.aceEditor, completion, true);
+        }
     },
 
     createSubMenuItemForCompletion: function(completionString, optStartLetters, type) {
@@ -251,7 +264,7 @@ function getCompletions(evalFunc, string, thenDo) {
 
 
 // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-// completions based on ace completer objects 
+// completions based on ace completer objects
 // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 Object.extend(lively.ide.codeeditor.Completions, {
@@ -298,7 +311,7 @@ Object.extend(lively.ide.codeeditor.Completions, {
             langTools.addCompleter(lively.ide.WordCompleter);
             next();
         }
-    
+
         function done(next) { alertOK('Word completion installed!'); next(); }
     }
 });

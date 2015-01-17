@@ -292,7 +292,7 @@ lively.BuildSpec('lively.ide.tools.ObjectEditor', {
                     $super(evt);
 
                     // remove the scene presentation when clicked elsewhere
-                    var target = evt.world.clickedOnMorph;
+                    var target = evt.hand.clickedOnMorph;
                     if (!this.listMorph || !this.listMorph.isAncestorOf(target)) {
                         this.removeTargetChooser();
                     } else {
@@ -1182,7 +1182,7 @@ lively.BuildSpec('lively.ide.tools.ObjectEditor', {
                     $super(evt);
 
                     // workaround - otherwise other morphs get this event
-                    var clickedMorph = evt && evt.world && evt.world.clickedOnMorph;
+                    var clickedMorph = evt && evt.hand && evt.hand.clickedOnMorph;
                     if (clickedMorph && (clickedMorph !== this && clickedMorph !== this.listMorph)) {
                         this.removeList();
                     }
@@ -1229,7 +1229,9 @@ lively.BuildSpec('lively.ide.tools.ObjectEditor', {
             this.confirmUnsavedChanges(thenDo);
         },
         confirmUnsavedChanges: function confirmUnsavedChanges(callback) {
-            return $world.confirm("Discard unsaved changes?", callback.bind(this));
+            var dialog = $world.confirm("Discard unsaved changes?", callback.bind(this));
+            (function() { dialog.view.focus(); }).delay(0.1);
+            return dialog;
         },
         copyToPartsBinWithUserRequest: function copyToPartsBinWithUserRequest() {
             this.owner.copyToPartsBinWithUserRequest();
@@ -1459,7 +1461,7 @@ lively.BuildSpec('lively.ide.tools.ObjectEditor', {
 
     editor.lastSaveSource = source;
     this.changeIndicator.indicateUnsavedChanges();
-    this.updateLists();
+    this.updateListsAndSelectNewFunction();
     editor.setStatusMessage("saved source", Color.green);
 
 },
@@ -1558,17 +1560,26 @@ lively.BuildSpec('lively.ide.tools.ObjectEditor', {
         },
         updateLists: function updateLists() {
 
-            var scriptListItems = this.sortedScriptNamesOfObj(this.target);
+            var scriptListItems = this.sortedScriptNamesOfObj(this.target) || [];
             scriptListItems.unshift("-- ALL --");
-            if (!Arrays.equal(scriptListItems, this.scriptList.getList())) {
+            if (!scriptListItems.equals(this.scriptList.getList())) {
                 this.scriptList.setList(scriptListItems);
             }
 
-            var connectionListItems = this.sortedConnectionNamesOfObj(this.target);
+            var connectionListItems = this.sortedConnectionNamesOfObj(this.target) || [];
             connectionListItems.unshift("-- ALL --");
-            if (!Arrays.equal(connectionListItems, this.connectionList.getList())) {
+            if (!connectionListItems.equals(this.connectionList.getList())) {
                 this.connectionList.setList(connectionListItems);
             }
+        },
+
+        updateListsAndSelectNewFunction: function updateListsAndSelectNewFunction() {
+            var oldScriptListItems = this.scriptList.getList();
+            this.updateLists();
+            var newScriptListItems = this.sortedScriptNamesOfObj(this.target);
+        
+            var diff = newScriptListItems.withoutAll(oldScriptListItems);
+            if (diff.length === 1) this.scriptList.setSelection(diff[0]);
         },
 
         updateTitleBar: function updateTitleBar() {

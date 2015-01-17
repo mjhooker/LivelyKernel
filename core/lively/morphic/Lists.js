@@ -237,7 +237,7 @@ lively.morphic.Box.subclass('lively.morphic.OldList',
         return true;
     },
     onMouseUpEntry: function ($super, evt) {
-        var completeClick = evt.world && evt.world.clickedOnMorph === this;
+        var completeClick = evt.hand && evt.hand.clickedOnMorph === this;
 
         if (completeClick && evt.isRightMouseButtonDown()) {
             return false;
@@ -475,7 +475,7 @@ lively.morphic.Box.subclass('lively.morphic.MorphList',
         if (!items) items = [];
         this.itemList = items;
         var oldItemMorphs = this.getItemMorphs();
-        var itemMorphs = this.itemMorphs = items.collect(function(ea) { return list.renderFunction(ea); });
+        var itemMorphs = this.itemMorphs = items.map(function(ea) { return list.renderFunction(ea); });
         oldItemMorphs.withoutAll(itemMorphs).invoke('remove');
         itemMorphs.forEach(function(ea, i) {
             list.submorphs.include(ea) || list.addMorph(ea, itemMorphs[i+1]); });
@@ -666,7 +666,7 @@ lively.morphic.Box.subclass('lively.morphic.MorphList',
 'event handling', {
     getListItemFromEvent: function(evt) {
         var morph = evt.getTargetMorph();
-        if (morph.hasOwnListItemBehavior) return null;
+        if (!morph || morph.hasOwnListItemBehavior) return null;
         if (this.itemMorphs.include(morph)) return morph;
         var owners = morph.ownerChain();
         if (!owners.include(this)) return null;
@@ -742,32 +742,36 @@ lively.morphic.Box.subclass('lively.morphic.List',
     },
 
     initializeLayout: function(layoutStyle) {
-        // // layoutStyle: {
-        // //   type: "tiling"|"horizontal"|"vertical",
-        // //   spacing: NUMBER,
-        // //   border: NUMBER
-        // // }
-        // var defaultLayout = {
-        //     type: 'tiling',
-        //     border: 0, spacing: 20
+        // FIXME, currently only a vert layout is supported. For more layout
+        // options use MorphList (allows you to use any morphic layout)
+        return;
+
+        // layoutStyle: {
+        //   type: "tiling"|"horizontal"|"vertical",
+        //   spacing: NUMBER,
+        //   border: NUMBER
         // }
-        // layoutStyle = Object.extend(defaultLayout, layoutStyle || {});
-        // this.applyStyle({
-        //     fill: Color.white, borderWidth: 0,
-        //     borderColor: Color.black, clipMode: 'auto',
-        //     resizeWidth: true, resizeHeight: true
-        // })
-        // var klass;
-        // switch (layoutStyle.type) {
-        //     case 'vertical': klass = lively.morphic.Layout.VerticalLayout; break;
-        //     case 'horizontal': klass = lively.morphic.Layout.HorizontalLayout; break;
-        //     case 'tiling': klass = lively.morphic.Layout.TileLayout; break;
-        //     default: klass = lively.morphic.Layout.TileLayout; break;
-        // }
-        // var layouter = new klass(this);
-        // layouter.setBorderSize(layoutStyle.border);
-        // layouter.setSpacing(layoutStyle.spacing);
-        // this.setLayouter(layouter);
+        var defaultLayout = {
+            type: 'tiling',
+            border: 0, spacing: 20
+        }
+        layoutStyle = Object.extend(defaultLayout, layoutStyle || {});
+        this.applyStyle({
+            fill: Color.white, borderWidth: 0,
+            borderColor: Color.black, clipMode: 'auto',
+            resizeWidth: true, resizeHeight: true
+        })
+        var klass;
+        switch (layoutStyle.type) {
+            case 'vertical': klass = lively.morphic.Layout.VerticalLayout; break;
+            case 'horizontal': klass = lively.morphic.Layout.HorizontalLayout; break;
+            case 'tiling': klass = lively.morphic.Layout.TileLayout; break;
+            default: klass = lively.morphic.Layout.TileLayout; break;
+        }
+        var layouter = new klass(this);
+        layouter.setBorderSize(layoutStyle.border);
+        layouter.setSpacing(layoutStyle.spacing);
+        this.setLayouter(layouter);
     },
 
     initLayout: function(noOfCandidates, existingLayout) {
@@ -814,7 +818,10 @@ lively.morphic.Box.subclass('lively.morphic.List',
 },
 'morph menu', {
 
-    getMenu: function() { /*FIXME actually menu items*/ return []; }
+    getMenu: function() {
+      // can be overridden to implement an app specific menu
+      return [];
+    }
 
 },
 'list interface', {
@@ -834,29 +841,33 @@ lively.morphic.Box.subclass('lively.morphic.List',
         return undefined;
     },
 
-    setList: function(items) {
-        var oldSelection = this.selection;
+    setList: function (items) {
+        var self = this;
+        var oldSelectionValues = this.getSelections();
         if (!items) items = [];
         this.itemList = items;
         this.layout = this.initLayout(items.length, this.layout);
         this.setupScroll(items.length, this.layout);
 
-        var newIndexForOldSelection;
-        if (this.isMultipleSelectionList || oldSelection === undefined ||
-            (newIndexForOldSelection = this.find(oldSelection)) === undefined) {
-                this.selectedIndexes.length = 0;
-                if(oldSelection !== undefined) {
-                    lively.bindings.signal(this, 'selection', this.selection);
-                    lively.bindings.signal(this, 'selectedLineNo', this.selectedLineNo);
-                }
-                this.updateView();
-                this.setScroll(0,0);
-                return;
-        }
-        if (this.selectedLineNo !== newIndexForOldSelection) {
-            lively.bindings.noUpdate(this.updateSelectionAndLineNo.bind(this,newIndexForOldSelection));
-        }
+        var newSelectionIndexes = oldSelectionValues.reduce(function(all, i) {
+            var found = self.find(i);
+            if (!isNaN(found)) all.push(found);
+            return all;
+        }, []);
+
+        var selectionChanged = !newSelectionIndexes.equals(oldSelectionValues);
+        if (selectionChanged) this.selectedIndexes.length = 0;
+
+        lively.bindings.noUpdate(function() {
+            newSelectionIndexes.forEach(function(i) {
+                self.updateSelectionAndLineNo(i); }); });
+
         this.updateView();
+
+        if (selectionChanged) {
+            lively.bindings.signal(this, 'selection', this.selection);
+            lively.bindings.signal(this, 'selectedLineNo', this.selectedLineNo);
+        }
     },
 
     updateList: function(items) { return this.setList(items); },
@@ -1056,13 +1067,19 @@ lively.morphic.Box.subclass('lively.morphic.List',
         var indexes = arr.collect(function(ea) { return this.find(ea) }, this);
         this.selectAllAt(indexes);
     },
-    setSelectionMatching: function(string) {
-        for (var i = 0; i < this.itemList.length; i++) {
-            var itemString = this.renderFunction(this.itemList[i]);
-            if (string == itemString) {
-                this.selectAt(i);
-                break;
-            }
+    setSelectionMatching: function(stringOrRegexp) {
+        var detector;
+        if (typeof stringOrRegexp === "string") detector = function(item) { return getString(item) === stringOrRegexp; };
+        else if (typeof stringOrRegexp === "function") detector = stringOrRegexp;
+        else if (lively.lang.obj.isRegExp(stringOrRegexp)) detector = function(item) { return getString(item).match(stringOrRegexp); };
+        var item = this.getList().detect(detector);
+        if (item) this.setSelection(item);
+        return item;
+
+        // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+        function getString(item) {
+          return typeof item === "string" ?
+            item : (item.string ? item.string : "")
         }
     },
     selectAllAt: function(indexes) {
@@ -1230,6 +1247,7 @@ lively.morphic.Box.subclass('lively.morphic.List',
                 lively.bindings.noUpdate(function() { itemMorph.selected = selected; });
             }
         }, this);
+        lively.bindings.signal(this, "rendered");
     },
 
     createListItemMorph: function(string, i, layout) {
@@ -1252,6 +1270,13 @@ lively.morphic.Box.subclass('lively.morphic.List',
             function setState() { self.selected = bool; }
             if (suppressUpdate) lively.bindings.noUpdate(setState); else setState();
         });
+        text.addScript(function onDrag(evt) {
+            if (!evt.hand.eventStartPos) return;
+            var list = this.owner.owner,
+                scrollByY = evt.hand.eventStartPos.subPt(evt.getPosition()).y / 4
+            list.setScroll(0, list.getScroll()[1]+scrollByY);
+        })
+        
         text.addScript(this.textOnMouseDown);
         // text.disableEvents();
         text.unignoreEvents();

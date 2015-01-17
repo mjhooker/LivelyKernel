@@ -1,4 +1,4 @@
-module('lively.persistence.BuildSpec').requires("lively.morphic.Widgets", "lively.morphic.Serialization", "lively.morphic.AdditionalMorphs", "lively.morphic.Lists").toRun(function() {
+module('lively.persistence.BuildSpec').requires("lively.morphic.Serialization", 'lively.persistence.BuildSpecMorphExtensions').toRun(function() {
 
 Object.subclass('lively.persistence.SpecObject',
 'properties', {
@@ -32,11 +32,11 @@ Object.subclass('lively.persistence.SpecObject',
                 case Boolean:
                 case Number: return a === b;
             };
-            if (Object.isFunction(a.equals)) return a.equals(b);
+            if (typeof a.equals === "function") return a.equals(b);
             function cmp(left, right) {
                 for (var name in left) {
-                    if (left[name] instanceof Function) continue;
-            	    if (!Objects.equal(left[name], right[name])) return false;
+                    if (typeof left[name] === "function") continue;
+              	    if (!Objects.equals(left[name], right[name])) return false;
                 }
                 return true;
             }
@@ -359,10 +359,5 @@ Object.extend(lively, {
 Object.extend(lively.persistence.BuildSpec, {
     Registry: new lively.persistence.SpecObjectRegistry()
 });
-
-
-(function loadBuildSpecMorphExtensions() {
-    module('lively.persistence.BuildSpecMorphExtensions').load();
-})();
 
 }) // end of moduled of module

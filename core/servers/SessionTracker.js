@@ -86,6 +86,7 @@ var sessionActions = {
         });
 
         connection.id = msg.data.id;
+
         connection.on('close', function() {
             // remove the session registration after the connection closes
             // give it some time because the connection might be just flaky and
@@ -273,6 +274,34 @@ var sessionActions = {
             sessionServer.routeMessage(msg, connection);
         }
     },
+
+    askFor: function(sessionServer, connection, msg) {
+        var user = msg.data.requiredUser;
+        var filter = user ? function(s) { return s.user === user; } : function() { return true; };
+        var sess = sessionServer.getLastActiveLocalSession(filter);
+        if (!sess) {
+            connection.send({
+                action: msg.action + 'Result',
+                inResponseTo: msg.messageId,
+        		data: {error: "'No last active session!'"}
+            });
+        } else {
+            msg.target = sess.id;
+            sessionServer.routeMessage(msg, connection);
+        }
+    },
+
+    remoteEvalRequest: function(sessionServer, connection, msg) {
+        try {
+            var result = eval(msg.data.expr);
+        } catch (e) { result = String(e); }
+        console.log("remote eval result ", result);
+        connection.send({
+            action: msg.action + 'Result',
+            inResponseTo: msg.messageId,
+            data: {result: result}
+        });
+    }
 }
 
 var services = require("./LivelyServices").services;
@@ -404,11 +433,12 @@ function SessionTracker(options) {
         function answer(response) {
             log(3, '%s got answer from routed message %s: ', tracker, msg.messageId, response);
             connection.send({
-                action: msg.action + 'Result',
-                inResponseTo: msg.messageId,
-                data: response.data,
-                target: msg.sender,
-                messageId: response.messageId
+                action:              msg.action + 'Result',
+                inResponseTo:        msg.messageId,
+                data:                response.data,
+                target:              msg.sender,
+                messageId:           response.messageId,
+                expectMoreResponses: response.expectMoreResponses
             });
         }
         var tracker = this, target = msg.target || msg.data.target;
@@ -416,14 +446,14 @@ function SessionTracker(options) {
         this.findConnection(target, function(err, targetConnection) {
             if (err || !targetConnection) {
                 console.warn('%s failed to route message: Failure finding target connection: ', tracker, err);
-                answer({data: {error: 'Failure finding target connection: ' + err, target: target}})
-                return; }
+                return answer({data: {error: 'Failure finding target connection: ' + err, target: target}});
+            }
             targetConnection.send({
-                action: msg.action,
-                data: msg.data,
-                sender: msg.sender,
-                target: target,
-                messageId: msg.messageId
+                action:    msg.action,
+                data:      msg.data,
+                sender:    msg.sender,
+                target:    target,
+                messageId: msg.messageId,
             }, answer);
         });
     }
@@ -712,10 +742,11 @@ function SessionTracker(options) {
         return util.format('SessionTracker(%s)', this.websocketServer);
     };
 
-    this.getLastActiveLocalSession = function() {
+    this.getLastActiveLocalSession = function(matchFunc) {
         var sessions = this.getLocalSessions({});
-        return Object.values(sessions[this.id()]).max(function(sess) {
-            return sess.lastActivity || 0; });
+        return Object.values(sessions[this.id()])
+            .filter(matchFunc || function(ea) { return true; })
+            .max(function(sess) { return sess.lastActivity || 0; });
     }
 
     this.getSessionListSimplified = function(options, thenDo) {
@@ -833,41 +864,44 @@ SessionTracker.default = function() { return global.tracker; }
 
 // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 // user data experiment
+function getLivelySessionData(req) {
+    var cookieField = 'lvUserData_2013-10-12';
+    return req.session ? req.session[cookieField] || (req.session[cookieField] = {}) : {};
+}
+
 lively.userData = (function setupUserDataExpt() {
     // first approach to a login/user system. does not really belong here!
-    var cookieField = 'lvUserData_2013-10-12';
-    function getStoredUserData(sess) {
-        if (!sess) return null;
-        return sess[cookieField] || (sess[cookieField] = {});
-    }
-
     var userData = {};
-
-    userData.getUserDataFromRequest = function(request) {
-        return request.session && getStoredUserData(request.session);
-    }
-
     userData.getUserName = function(request) {
-        var stored = this.getUserDataFromRequest(request);
+        var stored = getLivelySessionData(request);
         return stored && stored.username;
+    }
+    userData.getGroupName = function(request) {
+        var stored = getLivelySessionData(request);;
+        return stored && stored.group;
     }
 
     userData.registerHTTPHandlers = function(app, server) {
         app.post('/login', function(req, res) {
             var data = req.body || {},
-                stored = userData.getUserDataFromRequest(req);
+                stored = getLivelySessionData(req);;
+
             if (!data) { res.status(400).end('no data'); return; }
             if (!stored) { res.status(400).end('cannot access stored data'); return; }
-            console.log('user %s logged in %s at %s ip %s',
-                data.username, req.path, data.currentWorld || req.get('referer'), req.ip);
-            stored.username = data.username || 'unknown user';
-            stored.email = data.email || null;
+            // only change credentials if there is no login system in place:
+            if (!lively.server.lifeStar.config.authConf || !lively.server.lifeStar.config.authConf.enabled) {
+                stored.username = data.username || stored.username || 'unknown user';
+                stored.email = data.email || stored.email || null;
+                stored.group = data.group || stored.group || null;
+            }
+
             stored.lastLogin = new Date().toISOString();
-            res.end();
+            console.log('user %s logged in %s at %s ip %s',
+                stored.username, req.path, data.currentWorld || req.get('referer'), req.ip);
+            res.json(stored).end();
         });
         app.get('/login', function(req, res) {
-            var stored = getStoredUserData(req.session);
-            res.json(stored).end();
+            res.json(getLivelySessionData(req)).end();
         });
     };
 

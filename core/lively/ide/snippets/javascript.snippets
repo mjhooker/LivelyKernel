@@ -35,6 +35,12 @@ snippet ife
 	}
 snippet err
 	if (${1:err}) { ${2:thenDo}(err, null); return; }
+snippet options
+	if (typeof ${1:options} === "function") {
+		${2:thenDo} = ${1};
+		${1} = null;
+	}
+	${1} = ${1} || {};
 # tertiary conditional
 snippet ter
 	${1:/* condition */} ? ${2:a} : ${3:b}
@@ -75,7 +81,11 @@ regex /([,{[])|^\s*/:p/
 # setTimeout function
 snippet setTimeout
 regex /\b/st|timeout|setTimeo?u?t?/
-	setTimeout(function() {${3:$TM_SELECTED_TEXT}}, ${1:10});
+	setTimeout(function() {${0:$TM_SELECTED_TEXT}}, ${1:100});
+snippet setInterval
+regex /\b/int|setI?n?t?e?r?v?a?l?/
+	var i = setInterval(function() {${0:$TM_SELECTED_TEXT}}, ${1:1000});
+	clearInterval(i);
 # delay function
 snippet delay
 regex /\b/st|del(ay)?/
@@ -92,6 +102,9 @@ snippet cl
 # show (lively)
 snippet s
 	show("${1:%o}", ${2});
+# session snippet
+snippet getS
+	var s = lively.net.SessionTracker.getSession();
 # return
 snippet ret
 	return ${1:result};
@@ -103,6 +116,14 @@ snippet fori
 # hasOwnProperty
 snippet has
 	hasOwnProperty(${1})
+# printit comment
+snippet />
+	// => 
+# block comment
+snippet /*
+	/*
+	 * ${1:description}
+	 */
 # docstring
 snippet /**
 	/**
@@ -164,6 +185,17 @@ regex /^\s*([^\.]+)?/\.?addMe?t?h?o?d?s?/
 	"${2:category}", {
 		${0}
 	});
+# lively.lang
+snippet ll
+	lively.lang.$0
+snippet lls
+	lively.lang.string.
+snippet lla
+	lively.lang.arr.
+snippet llo
+	lively.lang.obj.
+snippet llf
+	lively.lang.fun.
 # Object.extend
 snippet Oe
 	Object.extend(${1:obj}, {$0});
@@ -233,3 +265,26 @@ snippet requ
 guard ^\s*
 	var ${1/.*\/(.)/\u$1/} = require("${1}").${1/.*\/(.)/\u$1/};
 	$0
+# Functions.composeAsync
+snippet async
+	Functions.composeAsync(
+		function(${1}next) { ${0:next(null);} }
+	)(${1}function(err) { if (err) show(err); });
+# typeof tests
+snippet typef
+	typeof ${1:object} === "function"${0}
+snippet typeu
+	typeof ${1:object} === "undefined"${0}
+snippet typenu
+	typeof ${1:object} !== "undefined"${0}
+# $world snippets
+snippet prompt
+	\$world.prompt("${1:query text}", function(input) {
+		if (!input) return;
+		${0}
+	}, {input: "${2:initial input}", historyId: "${3:prompt-id}"});
+snippet confirm
+	\$world.confirm("${1:query text}", function(input) {
+		if (!input) return;
+		${0}
+	});

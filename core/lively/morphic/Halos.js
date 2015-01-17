@@ -41,7 +41,10 @@ lively.morphic.Morph.addMethods(
     },
     getHalos: function() {
         var morph = this;
-        return this.getHaloClasses().map(function(ea) { return ea.getInstanceFor(morph) });
+        return this.getHaloClasses()
+            .map(function(ea) {
+                return ea.getInstanceFor ? ea.getInstanceFor(morph) : new ea(morph);
+            });
     },
 
     removeHalos: function(optWorld) {
@@ -119,12 +122,12 @@ lively.morphic.World.addMethods(
 lively.morphic.Box.subclass('lively.morphic.Halo',
 'settings', {
     style: {
-        borderWidth: 1, borderRadius: 12, borderColor: Color.darkGray,
+        borderWidth: 1, borderRadius: UserAgent.isMobile? 24 : 12, borderColor: Color.darkGray,
         enableHalos: false, enableDropping: false, enableDragging: true,
         opacity: 0.7, zIndex: 1010
     },
     dragTriggerDistance: 5,
-    defaultExtent: pt(24,24),
+    defaultExtent: UserAgent.isMobile ? pt(40,40) : pt(24,24),
     labelText: '',
     maxHorizontalLabels: 3,
     maxVerticalLabels: 3,
@@ -292,7 +295,7 @@ lively.morphic.Box.subclass('lively.morphic.Halo',
         if (!target || !world || !world.eventStartPos) {
             return
         }
-        target.moveBy(evt.getPosition().subPt(world.eventStartPos));
+        target.moveBy(evt.getPosition().subPt(evt.hand.eventStartPos));
         target.halos.invoke('alignAtTarget');
     },
 },
@@ -722,7 +725,7 @@ lively.morphic.Halo.subclass('lively.morphic.StyleHalo',
 'halo actions', {
     clickAction: function(evt) {
         this.targetMorph.removeHalos();
-        lively.morphic.World.current().openStyleEditorFor(this.targetMorph, evt);
+        lively.morphic.World.current().openStyleEditorFor(this.targetMorph);
     },
 });
 
@@ -755,7 +758,7 @@ lively.morphic.Halo.subclass('lively.morphic.ScriptEditorHalo',
 'halo actions', {
     clickAction: function(evt) {
         this.targetMorph.removeHalos();
-        $world.openObjectEditorFor(this.targetMorph, evt);
+        $world.openObjectEditorFor(this.targetMorph);
     },
 
 });
@@ -775,7 +778,7 @@ lively.morphic.Halo.subclass('lively.morphic.InspectHalo',
             this.targetMorph.openFRPInspector();
             return;
         }
-        $world.openInspectorFor(this.targetMorph, evt)
+        $world.openInspectorFor(this.targetMorph)
     },
 });
 
@@ -915,18 +918,17 @@ lively.morphic.Halo.subclass('lively.morphic.BoundsHalo',
 
 (function setupGetInstanceFor() {
     // add a getInstanceFor method to all halo classes
-    lively.morphic.Halo.allSubclasses().forEach(function(klass) {
+    lively.morphic.classes()
+      .filter(function(ea) { return ea.isSubclassOf(lively.morphic.Halo); })
+      .forEach(function(klass) {
         Object.extend(klass, {
             getInstanceFor: function(morph) {
-                if (!klass.instance) {
-                    klass.instance = new klass(morph);
-                } else {
-                    klass.instance.setTarget(morph);
-                }
+                if (!klass.instance) klass.instance = new klass(morph);
+                else klass.instance.setTarget(morph);
                 return klass.instance;
             }
         });
-    });
+      });
 
 })();
 

@@ -438,6 +438,36 @@ Object.subclass("lively.ast.MozillaAST.BaseVisitor",
         return retVal;
     },
 
+    visitArrowFunctionExpression: function(node, depth, state, path) {
+        var retVal;
+        node.params.forEach(function(ea, i) {
+            // ea is of type Pattern
+            retVal = this.accept(ea, depth, state, path.concat(["params", i]));
+        }, this);
+
+        if (node.defaults) {
+            node.defaults.forEach(function(ea, i) {
+                // ea is of type Expression
+                retVal = this.accept(ea, depth, state, path.concat(["defaults", i]));
+            }, this);
+        }
+
+        if (node.rest) {
+            // rest is a node of type Identifier
+            retVal = this.accept(node.rest, depth, state, path.concat(["rest"]));
+        }
+
+        // body is a node of type BlockStatement
+        retVal = this.accept(node.body, depth, state, path.concat(["body"]));
+
+        // node.generator has a specific type that is boolean
+        if (node.generator) {/*do stuff*/}
+
+        // node.expression has a specific type that is boolean
+        if (node.expression) {/*do stuff*/}
+        return retVal;
+    },
+
     visitSequenceExpression: function(node, depth, state, path) {
         var retVal;
         node.expressions.forEach(function(ea, i) {
@@ -702,6 +732,48 @@ Object.subclass("lively.ast.MozillaAST.BaseVisitor",
             // node.value has a specific type that is string or boolean or number or RegExp
         }
         return retVal;
+    },
+
+    visitClassDeclaration: function(node, depth, state, path) {
+        var retVal;
+        // id is a node of type Identifier
+        retVal = this.accept(node.id, depth, state, path.concat(["id"]));
+
+        if (node.superClass) {
+            // superClass is a node of type Identifier
+            retVal = this.accept(node.superClass, depth, state, path.concat(["superClass"]));
+        }
+
+        // body is a node of type ClassBody
+        retVal = this.accept(node.body, depth, state, path.concat(["body"]));
+        return retVal;
+    },
+
+    visitClassBody: function(node, depth, state, path) {
+        var retVal;
+        node.body.forEach(function(ea, i) {
+            // ea is of type MethodDefinition
+            retVal = this.accept(ea, depth, state, path.concat(["body", i]));
+        }, this);
+        return retVal;
+    },
+
+    visitMethodDefinition: function(node, depth, state, path) {
+        var retVal;
+        // node.static has a specific type that is boolean
+        if (node.static) {/*do stuff*/}
+
+        // node.computed has a specific type that is boolean
+        if (node.computed) {/*do stuff*/}
+
+        // node.kind is ""
+
+        // key is a node of type Identifier
+        retVal = this.accept(node.key, depth, state, path.concat(["key"]));
+
+        // value is a node of type FunctionExpression
+        retVal = this.accept(node.value, depth, state, path.concat(["value"]));
+        return retVal;
     }
 });
 
@@ -865,13 +937,47 @@ lively.ast.MozillaAST.BaseVisitor.subclass("lively.ast.ComparisonVisitor",
     visitLiteral: function($super, node1, node2, state, path) {
         this.compareField("value", node1, node2, state);
         $super(node1, node2, state, path);
+    },
+
+    visitClassDeclaration: function($super, node1, node2, state, path) {
+        this.compareField("id", node1, node2, state);
+        if (node1.superClass) {
+            this.compareField("superClass", node1, node2, state);
+        }
+        this.compareField("body", node1, node2, state);
+        $super(node1, node2, state, path);
+    },
+
+    visitClassBody: function($super, node1, node2, state, path) {
+        this.compareField("body", node1, node2, state);
+        $super(node1, node2, state, path);
+    },
+
+    visitMethodDefinition: function($super, node1, node2, state, path) {
+        this.compareField("static", node1, node2, state);
+        this.compareField("computed", node1, node2, state);
+        this.compareField("kind", node1, node2, state);
+        this.compareField("key", node1, node2, state);
+        this.compareField("value", node1, node2, state);
+        $super(node1, node2, state, path);
     }
 });
 
 lively.ast.MozillaAST.BaseVisitor.subclass("lively.ast.ScopeVisitor",
 'scope specific', {
     newScope: function(scopeNode, parentScope) {
-        var scope = {node: scopeNode, varDecls: [], funcDecls: [], refs: [], params: [], subScopes: []}
+        var scope = {
+          node: scopeNode,
+          varDecls: [],
+          varDeclPaths: [],
+          funcDecls: [],
+          classDecls: [],
+          methodDecls: [],
+          refs: [],
+          params: [],
+          catches: [],
+          subScopes: []
+        }
         if (parentScope) parentScope.subScopes.push(scope);
         return scope;
     }
@@ -881,15 +987,14 @@ lively.ast.MozillaAST.BaseVisitor.subclass("lively.ast.ScopeVisitor",
     accept: function (node, depth, scope, path) {
         path = path || [];
         try {
-        return this['visit' + node.type](node, depth, scope, path);
-
-        } catch (e) {
-            show(e.stack)
-        }
+            if (!this['visit' + node.type]) throw new Error("No AST visit handler for type " + node.type);
+            return this['visit' + node.type](node, depth, scope, path);
+        } catch (e) { show(e.stack) }
     },
 
     visitVariableDeclaration: function ($super, node, depth, scope, path) {
         scope.varDecls.push(node);
+        scope.varDeclPaths.push(path);
         return $super(node, depth, scope, path);
     },
 
@@ -945,6 +1050,33 @@ lively.ast.MozillaAST.BaseVisitor.subclass("lively.ast.ScopeVisitor",
 
     },
 
+    visitArrowFunctionExpression: function($super, node, depth, scope, path) {
+        var newScope = this.visitFunction(node, depth, scope, path);
+
+        var retVal;
+        if (node.defaults) {
+            node.defaults.forEach(function(ea, i) {
+                // ea is of type Expression
+                retVal = this.accept(ea, depth, newScope, path.concat(["defaults", i]));
+            }, this);
+        }
+
+        if (node.rest) {
+            // rest is a node of type Identifier
+            retVal = this.accept(node.rest, depth, newScope, path.concat(["rest"]));
+        }
+
+        // body is a node of type BlockStatement
+        retVal = this.accept(node.body, depth, newScope, path.concat(["body"]));
+
+        // node.generator has a specific type that is boolean
+        if (node.generator) {/*do stuff*/}
+
+        // node.expression has a specific type that is boolean
+        if (node.expression) {/*do stuff*/}
+        return retVal;
+    },
+
     visitIdentifier: function ($super, node, depth, scope, path) {
         scope.refs.push(node);
         return $super(node, depth, scope, path);
@@ -978,7 +1110,7 @@ lively.ast.MozillaAST.BaseVisitor.subclass("lively.ast.ScopeVisitor",
         if (node.handler) {
             // handler is a node of type CatchClause
             retVal = this.accept(node.handler, depth, scope, path.concat(["handler"]));
-            scope.params.push(node.handler.param);
+            scope.catches.push(node.handler.param);
         }
 
         node.guardedHandlers && node.guardedHandlers.forEach(function(ea, i) {
@@ -995,6 +1127,34 @@ lively.ast.MozillaAST.BaseVisitor.subclass("lively.ast.ScopeVisitor",
         var retVal;
         // ignore label
         retVal = this.accept(node.body, depth, state, path.concat(["body"]));
+        return retVal;
+    },
+
+
+    visitClassDeclaration: function(node, depth, scope, path) {
+        scope.classDecls.push(node);
+
+        var retVal;
+        // id is a node of type Identifier
+        // retVal = this.accept(node.id, depth, state, path.concat(["id"]));
+
+        if (node.superClass) {
+            this.accept(node.superClass, depth, scope, path.concat(["superClass"]));
+        }
+
+        // body is a node of type ClassBody
+        retVal = this.accept(node.body, depth, scope, path.concat(["body"]));
+        return retVal;
+    },
+
+    visitMethodDefinition: function(node, depth, scope, path) {
+        var retVal;
+
+        // don't visit key Identifier for now
+        // retVal = this.accept(node.key, depth, scope, path.concat(["key"]));
+
+        // value is a node of type FunctionExpression
+        retVal = this.accept(node.value, depth, scope, path.concat(["value"]));
         return retVal;
     }
 });
@@ -1124,23 +1284,28 @@ Object.extend(lively.ast.acorn, {
     // FIXME: global (and temporary) findNodeByAstIndex is used by __getClosure and defined in Rewriting.js
     Global.findNodeByAstIndex = acorn.walk.findNodeByAstIndex;
 
-    acorn.walk.findStatementOfNode = function(ast, target) {
-        // find the statement that a target node is in. Example:
+    acorn.walk.findStatementOfNode = function(options, ast, target) {
+        // Can also be called with just ast and target. options can be {asPath: BOOLEAN}.
+        // Find the statement that a target node is in. Example:
         // let source be "var x = 1; x + 1;" and we are looking for the
         // Identifier "x" in "x+1;". The second statement is what will be found.
+        if (!target) { target = ast; ast = options; options = null }
+        if (!options) options = {}
         if (!ast.astIndex) acorn.walk.addAstIndex(ast);
-        var found, targetReached = false, bodyNode, lastStatement;
-        lively.ast.acorn.withMozillaAstDo(ast, {}, function(next, node, _) {
+        var found, targetReached = false, bodyNodes, lastStatement;
+        lively.ast.acorn.withMozillaAstDo(ast, {}, function(next, node, depth, state, path) {
             if (targetReached || node.astIndex < target.astIndex) return;
             if (node.type === "Program" || node.type === "BlockStatement") {
-                bodyNode = node;
+                bodyNodes = node.body;
+            } else if (node.type === "SwitchCase") {
+                bodyNodes = node.consequent;
             }
-            if (bodyNode) {
-                var nodeIdxInProgramNode = bodyNode.body.indexOf(node);
+            if (bodyNodes) {
+                var nodeIdxInProgramNode = bodyNodes.indexOf(node);
                 if (nodeIdxInProgramNode > -1) lastStatement = node;
             }
             if (!targetReached && (node === target || node.astIndex === target.astIndex)) {
-                targetReached = true; found = lastStatement;
+                targetReached = true; found = options.asPath ? path : lastStatement;
             }
             !targetReached && next();
         });
@@ -1185,7 +1350,32 @@ Object.extend(lively.ast.query, {
         return scope;
     },
 
+    nodesAtIndex: function(ast, index) {
+      return lively.ast.acorn.withMozillaAstDo(ast, [], function(next, node, found) {
+        if (node.start <= index && index <= node.end) { found.push(node); next(); }
+        return found;
+      });
+    },
+
+    scopesAtIndex: function(ast, index) {
+      return lively.lang.tree.filter(
+        lively.ast.query.scopes(ast),
+        function(scope) {
+          var n = scope.node;
+          if (n.type === 'FunctionDeclaration') n = n.body;
+          return n.start <= index && index <= n.end;
+        },
+        function(s) { return s.subScopes; });
+    },
+
+    scopeAtIndex: function(ast, index) {
+      return lively.ast.query.scopesAtIndex(ast, index).last();
+    },
+
     scopesAtPos: function(pos, ast) {
+        // DEPRECATED
+        // FIXME "scopes" should actually not referer to a node but to a scope
+        // object, see lively.ast.query.scopes!
         return lively.ast.acorn.nodesAt(pos, ast).filter(function(node) {
             return node.type === 'Program'
                 || node.type === 'FunctionDeclaration'
@@ -1194,6 +1384,9 @@ Object.extend(lively.ast.query, {
     },
 
     nodesInScopeOf: function(node) {
+        // DEPRECATED
+        // FIXME "scopes" should actually not referer to a node but to a scope
+        // object, see lively.ast.query.scopes!
         return lively.ast.acorn.withMozillaAstDo(node, {root: node, result: []}, function(next, node, state) {
             state.result.push(node);
             if (node !== state.root
@@ -1207,27 +1400,31 @@ Object.extend(lively.ast.query, {
 
     topLevelDeclsAndRefs: function(ast, options) {
         if (typeof ast === "string") ast = lively.ast.acorn.parse(ast, {withComments: true});
-        var scope = lively.ast.query.scopes(ast),
-            useComments = options && !!options.jslintGlobalComment,
-            declared = declaredVarNames(scope),
-            refs = scope.refs.concat(scope.subScopes.map(findUndeclaredReferences).flatten()),
-            undeclared = refs.pluck('name').withoutAll(declared);
+
+        var scope         = lively.ast.query.scopes(ast),
+            useComments   = options && !!options.jslintGlobalComment,
+            declared      = declaredVarNames(scope),
+            refs          = scope.refs.concat(scope.subScopes.map(findUndeclaredReferences).flatten()),
+            undeclared    = refs.pluck('name').withoutAll(declared);
 
         return {
-            varDecls: scope.varDecls,
-            funcDecls: scope.funcDecls,
-            declaredNames: declared,
+            scope:           scope,
+            varDecls:        scope.varDecls,
+            funcDecls:       scope.funcDecls,
+            declaredNames:   declared,
             undeclaredNames: undeclared,
-            refs: refs
+            refs:            refs
         }
 
         // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
         function declaredVarNames(scope) {
-            return scope.funcDecls.pluck('id').pluck('name').compact()
+            return [scope.node.id && scope.node.id.name]
+                .concat(scope.funcDecls.pluck('id').pluck('name')).compact()
                 .concat(scope.params.pluck('name'))
-                .concat(scope.varDecls.pluck('declarations').flatten()
-                    .pluck('id').pluck('name'))
+                .concat(scope.catches.pluck('name'))
+                .concat(scope.varDecls.pluck('declarations').flatten().pluck('id').pluck('name'))
+                .concat(scope.classDecls.pluck('id').pluck('name'))
                 .concat(!useComments ? [] :
                     findJsLintGlobalDeclarations(
                         scope.node.type === 'Program' ?
@@ -1259,8 +1456,62 @@ Object.extend(lively.ast.query, {
             noGlobals = topLevel.declaredNames.concat(q.knownGlobals);
         return topLevel.refs.filter(function(ea) {
             return noGlobals.indexOf(ea.name) === -1; })
-    }
+    },
 
+    findNodesIncludingLines: function(ast, code, lines, options) {
+      if (!code && !ast) throw new Error("Need at least ast or code");
+      code = code ? code : lively.ast.acorn.stringify(ast);
+      ast = ast && ast.loc ? ast : lively.ast.acorn.parse(code, {locations: true});
+      return lively.ast.acorn.withMozillaAstDo(ast, [], function(next, node, found) {
+        if (lines.every(function(line) {
+          return Numbers.between(line, node.loc.start.line, node.loc.end.line); })) {
+            found.pushIfNotIncluded(node); next(); }
+        return found;
+      });
+    },
+
+    findReferencesAndDeclsInScope: function(scope, name) {
+      function varDeclIdsOf(scope) {
+        return scope.params
+          .concat(
+            scope.funcDecls.concat(
+              scope.varDecls.pluck("declarations").flatten()).pluck('id'));
+      }
+
+      var refs = lively.lang.tree.map(
+        scope,
+        function(scope) {
+          return scope.refs.concat(varDeclIdsOf(scope))
+            .filter(function(ref) { return ref.name === name; });
+        },
+        function(s) {
+          return s.subScopes.filter(function(subScope) {
+            return varDeclIdsOf(subScope)
+              .every(function(id) { return  id.name !== name; })
+          });
+        }).flatten();
+
+      return refs;
+    },
+
+    findDeclarationClosestToIndex: function(ast, name, index) {
+      // var scopes = lively.ast
+      function varDeclIdsOf(scope) {
+        return scope.params
+          .concat(
+            scope.funcDecls.concat(
+              scope.varDecls.pluck("declarations").flatten()).pluck('id'));
+      }
+      var found = null;
+      lively.ast.query.scopesAtIndex(ast, index)
+        .reverse().detect(function(scope) {
+          var decls = varDeclIdsOf(scope),
+              idx = decls.pluck('name').indexOf(name);
+          if (idx === -1) return false;
+          found = decls[idx]; return true;
+      });
+      return found;
+    }
 });
 
 Object.extend(lively.ast.transform, {
@@ -1307,7 +1558,7 @@ Object.extend(lively.ast.transform, {
 
         replaceNode: function(target, replacementFunc, sourceOrChanges) {
             // parameters:
-            //   - target: ast note
+            //   - target: ast node
             //   - replacementFunc that gets this node and its source snippet
             //     handed and should produce a new ast node.
             //   - sourceOrChanges: If its a string -- the source code to rewrite
@@ -1346,7 +1597,7 @@ Object.extend(lively.ast.transform, {
                     replacementSource = helper._node2string(replacement);
 
             var changes = [{type: 'del', pos: pos.start, length: pos.end - pos.start},
-                          {type: 'add', pos: pos.start, string: replacementSource}];
+                           {type: 'add', pos: pos.start, string: replacementSource}];
 
             return {
                 changes: sourceChanges.changes.concat(changes),
@@ -1406,6 +1657,7 @@ Object.extend(lively.ast.transform, {
         var ignoreUndeclaredExcept = (options && options.ignoreUndeclaredExcept) || null
         var whitelist = (options && options.include) || null;
         var blacklist = (options && options.exclude) || [];
+        var recordDefRanges = options && options.recordDefRanges;
 
         var ast = typeof astOrSource === 'object' ?
                 astOrSource : lively.ast.acorn.parse(astOrSource),
@@ -1414,21 +1666,40 @@ Object.extend(lively.ast.transform, {
             topLevel = lively.ast.query.topLevelDeclsAndRefs(ast);
 
         if (ignoreUndeclaredExcept) {
-            blacklist = topLevel.undeclaredNames.withoutAll(ignoreUndeclaredExcept);
+            blacklist = topLevel.undeclaredNames
+              .withoutAll(ignoreUndeclaredExcept)
+              .concat(blacklist);
         }
 
-        // 1. make all references declared in the toplevel scope into property
+        // 1. find those var declarations that should not be rewritten. we
+        // currently ignore var declarations in for loops and the error parameter
+        // declaration in catch clauses
+        var scope = topLevel.scope;
+        blacklist.pushAll(scope.catches.pluck("name"));
+        var forLoopDecls = scope.varDecls.filter(function(decl, i) {
+            var path = lively.PropertyPath(scope.varDeclPaths[i]),
+                parent = path.slice(0,-1).get(ast);
+            return parent.type === "ForStatement";
+        });
+        blacklist.pushAll(forLoopDecls.pluck("declarations").flatten().pluck("id").pluck("name"));
+
+        // 2. make all references declared in the toplevel scope into property
         // reads of assignToObj
         // Example "var foo = 3; 99 + foo;" -> "var foo = 3; 99 + Global.foo;"
         var result = lively.ast.transform.helper.replaceNodes(
             topLevel.refs
-                .filter(shouldBeCapturedRef)
-                .map(function(ref) { return {target: ref, replacementFunc: function(ref) { return member(ref, assignToObj) }}; }), source);
+                .filter(shouldRefBeCaptured)
+                .map(function(ref) {
+                  return {
+                    target: ref,
+                    replacementFunc: function(ref) { return member(ref, assignToObj); }
+                  };
+                }), source);
 
-        // 2. turn var declarations into assignments to assignToObj
+        // 3. turn var declarations into assignments to assignToObj
         // Example: "var foo = 3; 99 + foo;" -> "Global.foo = 3; 99 + foo;"
         result = lively.ast.transform.helper.replaceNodes(
-            topLevel.varDecls
+            topLevel.varDecls.withoutAll(forLoopDecls)
                 .map(function(decl) {
                     return {
                         target: decl,
@@ -1437,19 +1708,26 @@ Object.extend(lively.ast.transform, {
                                 var scopes = lively.ast.query.scopes(lively.ast.acorn.parse(s, {addSource: true}));
                                 declNode = scopes.varDecls[0]
                             }
+
                             return declNode.declarations.map(function(ea) {
-                                return shouldBeCapturedDecl(ea) ?
-                                    assign(ea.id, ea.init) : varDecl(ea); });
+                                var init = {
+                                  operator: "||",
+                                  type: "LogicalExpression",
+                                  left: {computed: true, object: assignToObj,property: {type: "Literal", value: ea.id.name},type: "MemberExpression"},
+                                  right: {name: "undefined", type: "Identifier"}
+                                }
+                                return shouldDeclBeCaptured(ea) ?
+                                    assign(ea.id, ea.init || init) : varDecl(ea); });
                         }
                     }
                 }), result);
 
-        // 3. assignments for function declarations in the top level scope are
+        // 4. assignments for function declarations in the top level scope are
         // put in front of everything else:
         // "return bar(); function bar() { return 23 }" -> "Global.bar = bar; return bar(); function bar() { return 23 }"
         if (topLevel.funcDecls.length) {
             var globalFuncs = topLevel.funcDecls
-                .filter(shouldBeCapturedDecl)
+                .filter(shouldDeclBeCaptured)
                 .map(function(decl) {
                     var funcId = {type: "Identifier", name: decl.id.name};
                     return lively.ast.acorn.stringify(assign(funcId, funcId));
@@ -1463,16 +1741,28 @@ Object.extend(lively.ast.transform, {
             }
         }
 
+        // 5. def ranges so that we know at which source code positions the
+        // definitions are
+        if (recordDefRanges)
+            result.defRanges = scope.varDecls
+                .pluck("declarations").flatten()
+                .concat(scope.funcDecls)
+                .reduce(function(defs, decl) {
+                    if (!defs[decl.id.name]) defs[decl.id.name] = []
+                    defs[decl.id.name].push({type: decl.type, start: decl.start, end: decl.end});
+                    return defs;
+                }, {});
+
         return result;
 
         // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-        function shouldBeCapturedRef(ref) {
+        function shouldRefBeCaptured(ref) {
             return blacklist.indexOf(ref.name) === -1
                 && (!whitelist || whitelist.indexOf(ref.name) > -1);
         }
 
-        function shouldBeCapturedDecl(decl) { return shouldBeCapturedRef(decl.id); }
+        function shouldDeclBeCaptured(decl) { return shouldRefBeCaptured(decl.id); }
 
         function assign(id, value) {
             return {
@@ -1540,19 +1830,41 @@ Object.extend(lively.ast.transform, {
         return lively.ast.transform.helper.replaceNodes(targetsAndReplacements, source);
     },
 
-    returnLastStatement: function(source) {
-        // lively.ast.transformReturnLastStatement('foo + 3;\n this.baz(99 * 3) + 4;')
-        // source = that.getTextRange()
-        var ast = lively.ast.acorn.parse(source),
+    returnLastStatement: function(source, opts) {
+        opts = opts || {};
+        var parse = lively.ast.acorn.parse,
+            ast = parse(source, {ecmaVersion: 6}),
             last = ast.body.pop(),
-            newLastsource = 'return ' + source.slice(last.start, last.end),
-            newLast = lively.ast.acorn.fuzzyParse(newLastsource).body.last(),
-            newSource = source.slice(0, last.start) + 'return ' + source.slice(last.start)
+            newLastsource = 'return ' + source.slice(last.start, last.end);
+        if (!opts.asAST) return source.slice(0, last.start) + newLastsource;
+        
+        var newLast = parse(newLastsource, {allowReturnOutsideFunction: true, ecmaVersion: 6}).body.slice(-1)[0];
         ast.body.push(newLast);
-        ast.end += 'return '.length
-        return newSource.slice(ast.start, ast.end);
-    }
+        ast.end += 'return '.length;
+        return ast;
+    },
 
+    wrapInFunction: function(code, opts) {
+        opts = opts || {};
+        var transformed = lively.ast.transform.returnLastStatement(code, opts);
+        return opts.asAST ?  {
+          type: "Program",
+          body: [{
+            type: "ExpressionStatement",
+            expression: {
+              body: {body: transformed.body, type: "BlockStatement"},
+              params: [],
+              type: "FunctionExpression"
+            },
+          }]
+        } : "function() {\n" + transformed + "\n}";
+    }
 });
+
+(function extendLivelyAst() {
+  ["withMozillaAstDo","printAst","compareAst","pathToNode","rematchAstWithSource","stringify","parse","parseFunction","parseLikeOMeta","fuzzyParse","nodesAt"].forEach(function(k) {
+    lively.ast[k] = lively.ast.acorn[k];
+  });
+})();
 
 }) // end of module

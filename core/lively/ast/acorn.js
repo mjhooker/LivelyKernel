@@ -53,12 +53,7 @@ Object.extend(acorn.walk, {
         // func args: node, state, depth, type
         options = options || {};
         var traversal = options.traversal || 'preorder'; // also: postorder
-        var visitors = options.visitors ? Object.extend({}, options.visitors) : acorn.walk.make({
-            MemberExpression: function(node, st, c) {
-                c(node.object, st, "Expression");
-                c(node.property, st, "Expression");
-            }
-        });
+        var visitors = Object.clone(options.visitors ? options.visitors : acorn.walk.visitors.withMemberExpression);
         var iterator = traversal === 'preorder' ?
             function(orig, type, node, depth, cont) { func(node, state, depth, type); return orig(node, depth+1, cont); } :
             function(orig, type, node, depth, cont) { var result = orig(node, depth+1, cont); func(node, state, depth, type); return result; };
@@ -79,12 +74,7 @@ Object.extend(acorn.walk, {
 
     findNodesIncluding: function(ast, pos, test, base) {
         var nodes = [];
-        base = base || acorn.walk.make({
-            MemberExpression: function(node, st, c) {
-                c(node.object, st, "Expression");
-                c(node.property, st, "Expression");
-            }
-        });
+        base = base || Object.clone(acorn.walk.visitors.withMemberExpression);
         Object.keys(base).forEach(function(name) {
             var orig = base[name];
             base[name] = function(node, state, cont) {
@@ -92,6 +82,15 @@ Object.extend(acorn.walk, {
                 return orig(node, state, cont);
             }
         });
+        base["Property"] = function (node, st, c) {
+            nodes.pushIfNotIncluded(node);
+            c(node.key, st, "Expression");
+            c(node.value, st, "Expression");
+        }
+        base["LabeledStatement"] = function (node, st, c) {
+            node.label && c(node.label, st, "Expression");
+            c(node.body, st, "Statement");
+        }
         acorn.walk.findNodeAround(ast, pos, test, base);
         return nodes;
     },
@@ -798,7 +797,25 @@ Object.extend(acorn.walk, {
         return beforeOrAfter === 'before' ?
             siblingsWithNode.slice(0, nodeIdxInSiblings) :
             siblingsWithNode.slice(nodeIdxInSiblings + 1);
-    }
+    },
+
+    visitors: []
+
+});
+
+// cached visitors that are used often
+Object.extend(acorn.walk.visitors, {
+
+    stopAtFunctions: acorn.walk.make({
+        'Function': function() { /* stop descent */ }
+    }),
+
+    withMemberExpression: acorn.walk.make({
+        MemberExpression: function(node, st, c) {
+            c(node.object, st, "Expression");
+            c(node.property, st, "Expression");
+        }
+    })
 
 });
 
@@ -813,6 +830,7 @@ Object.extend(lively.ast.acorn, {
         // See https://github.com/marijnh/acorn for full acorn doc and parse options.
         // options: {
         //   addSource: BOOL, -- add source property to each node
+        //   addAstIndex: BOOL, -- each node gets an index  number
         //   withComments: BOOL, -- adds comment objects to Program/BlockStatements:
         //                          {isBlock: BOOL, text: STRING, node: NODE,
         //                           start: INTEGER, end: INTEGER, line: INTEGER, column: INTEGER}
@@ -821,7 +839,11 @@ Object.extend(lively.ast.acorn, {
         //   locations: BOOL -- Default is false
         // }
 
-        if (options && options.withComments) {
+        options = options || {};
+        options.ecmaVersion = 6;
+
+        if (options.withComments) {
+            // record comments
             delete options.withComments;
             var comments = [];
             options.onComment = function(isBlock, text, start, end, line, column) {
@@ -834,27 +856,83 @@ Object.extend(lively.ast.acorn, {
             };
         }
 
-        var ast = options && options.addSource ?
+        var ast = options.addSource ?
             acorn.walk.addSource(source, options) : // FIXME
             acorn.parse(source, options);
 
-        if (ast && comments) { // adding nodes to comments
-            ast.allComments = comments;
-            comments.forEach(function(comment) { 
-                var node = lively.ast.acorn.nodesAt(comment.start, ast)
-                        .reverse().detect(function(node) {
-                            return node.type === 'BlockStatement' || node.type === 'Program'; })
-                if (!node) node = ast;
-                if (!node.comments) node.comments = [];
-                node.comments.push(comment);
-            });
-        }
+        if (options.addAstIndex && !ast.hasOwnProperty('astIndex')) acorn.walk.addAstIndex(ast);
+
+        if (ast && comments) attachCommentsToAST({ast: ast, comments: comments, nodesWithComments: []});
 
         return ast;
+
+        // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+        function attachCommentsToAST(commentData) {
+            // for each comment: assign the comment to a block-level AST node
+            commentData = mergeComments(assignCommentsToBlockNodes(commentData));
+            ast.allComments = commentData.comments;
+        }
+
+        function assignCommentsToBlockNodes(commentData) {
+            comments.forEach(function(comment) { 
+              var node = lively.ast.acorn.nodesAt(comment.start, ast)
+                      .reverse().detect(function(node) {
+                          return node.type === 'BlockStatement' || node.type === 'Program'; })
+              if (!node) node = ast;
+              if (!node.comments) node.comments = [];
+              node.comments.push(comment);
+              commentData.nodesWithComments.push(node);
+            });
+            return commentData;
+        }
+
+        function mergeComments(commentData) {
+            // coalesce non-block comments (multiple following lines of "// ...") into one comment.
+            // This only happens if line comments aren't seperated by newlines
+            commentData.nodesWithComments.forEach(function(blockNode) {
+                blockNode.comments.clone().reduce(function(coalesceData, comment) {
+                    if (comment.isBlock) {
+                        coalesceData.lastComment = null;
+                        return coalesceData;
+                    }
+
+                    if (!coalesceData.lastComment) {
+                        coalesceData.lastComment = comment;
+                        return coalesceData;
+                    }
+            
+                    // if the comments are seperated by a statement, don't merge
+                    var last = coalesceData.lastComment;
+                    var nodeInbetween = blockNode.body.detect(function(node) { return node.start >= last.end && node.end <= comment.start; });
+                    if (nodeInbetween) {
+                        coalesceData.lastComment = comment;
+                        return coalesceData;
+                    }
+                    
+                    // if the comments are seperated by a newline, don't merge
+                    var codeInBetween = source.slice(last.end, comment.start);
+                    if (/[\n\r][\n\r]+/.test(codeInBetween)) {
+                        coalesceData.lastComment = comment;
+                        return coalesceData; 
+                    }
+            
+                    // merge comments into one
+                    last.text += "\n" + comment.text;
+                    last.end = comment.end;
+                    blockNode.comments.remove(comment);
+                    commentData.comments.remove(comment);
+                    return coalesceData;
+                }, {lastComment: null});
+            });
+            return commentData;
+        }
+
     },
 
     parseFunction: function(source, options) {
         options = options || {};
+        options.ecmaVersion = 6;
         var src = '(' + source + ')',
             ast = acorn.parse(src);
         /*if (options.addSource) */acorn.walk.addSource(ast, src);
@@ -902,6 +980,7 @@ Object.extend(lively.ast.acorn, {
     fuzzyParse: function(source, options) {
         // options: verbose, addSource, type
         options = options || {};
+        options.ecmaVersion = 6;
         var ast, safeSource, err;
         if (options.type === 'LabeledStatement') { safeSource = '$={' + source + '}'; }
         try {

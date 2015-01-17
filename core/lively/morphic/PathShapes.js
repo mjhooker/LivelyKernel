@@ -62,7 +62,8 @@ lively.morphic.Shapes.Shape.subclass('lively.morphic.Shapes.Path',
         //return this.cachedVertices;
     },
     getBounds: function() {
-        return this.renderContextDispatch('getPathBounds');
+        return this.renderContextDispatch('getPathBounds')
+            || lively.rect(0,0,0,0);
     },
     getExtent: function() {
         return this.getBounds().extent()
@@ -319,8 +320,8 @@ Object.extend(lively.morphic.Shapes.PathElement, {
         });
 
         // create PathElement objects from splitted data
-        var
-            pathElementClasses = lively.morphic.Shapes.PathElement.allSubclasses(),
+        var pathElementClasses = lively.morphic.Shapes.classes().filter(function(ea) {
+              return ea.isSubclassOf(lively.morphic.Shapes.PathElement); }),
             pathElements = [],
             klass = null,
             currentChunks = [],

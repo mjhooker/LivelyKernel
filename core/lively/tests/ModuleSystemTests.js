@@ -108,6 +108,7 @@ TestCase.subclass('lively.tests.ModuleSystemTests.ModuleTest', {
     },
 
     testRequireLib: function() {
+        module('foo.bar').remove();
         var moduleCodeExecuted = false,
             lib = {uri: URL.root.withFilename('foo.js'), loadTest: function() { return false; }};
         module('foo.bar').requires().requiresLib(lib).toRun(function() {
@@ -119,8 +120,16 @@ TestCase.subclass('lively.tests.ModuleSystemTests.ModuleTest', {
     testModuleNamesSupportUnicodeChars: function() {
         this.assertEquals("Global.users.foo.config", module('users.foo.config').namespaceIdentifier);
         this.assertEquals("Global.users.föö.config", module('users.föö.config').namespaceIdentifier);
-    }
+    },
 
+    testModuleNameWithDot: function() {
+        var m = module("foo\\.bar.baz");
+        this.assert(m !== lively.module("foo.bar.baz"), "interpreted as foo.bar.baz");
+        this.assertEquals(m.uri(), URL.codeBase.withFilename("foo.bar/baz.js").toString(),"modulename -> uri conversion");
+        
+        // the other way around
+        this.assertEquals("Global.foo\\.bar.baz", lively.module("foo.bar/baz.js").namespaceIdentifier);
+    }
 });
 
 AsyncTestCase.subclass('lively.tests.ModuleSystemTests.ModuleLoad',
@@ -142,6 +151,7 @@ AsyncTestCase.subclass('lively.tests.ModuleSystemTests.ModuleLoad',
 'testing', {
 
     testRequireLib: function() {
+        module('foo.baz').remove();
         var moduleCodeExecuted = false,
             libBazIsLoaded = false,
             loadTestCalled = 0;
@@ -164,7 +174,7 @@ AsyncTestCase.subclass('lively.tests.ModuleSystemTests.ModuleLoad',
             this.assert(moduleCodeExecuted, 'module not executed');
             this.assert(!module('foo.baz').hasPendingRequirements(), 'hasPendingRequirements 3');
             this.done();
-        }, 120);
+        }, 620);
     },
 
     testRequireLibSync: function() {

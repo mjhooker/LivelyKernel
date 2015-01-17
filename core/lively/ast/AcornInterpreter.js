@@ -131,9 +131,7 @@ Object.subclass('lively.ast.AcornInterpreter.Interpreter',
                 if (type != 'FunctionDeclaration') return;
                 self.visitFunctionDeclaration(node, { currentFrame: frame });
             }
-        }, null, { visitors: acorn.walk.make({
-            'Function': function() { /* stop descent */ }
-        })});
+        }, null, { visitors: acorn.walk.visitors.stopAtFunctions });
     },
 
     invoke: function(recv, func, argValues, frame, isNew) {
@@ -311,8 +309,15 @@ Object.subclass('lively.ast.AcornInterpreter.Interpreter',
         try {
             this['visit' + node.type](node, state);
         } catch (e) {
-            if (lively.Config.get('loadRewrittenCode') && e.unwindException)
-                e = e.unwindException;
+            if (lively.Config.get('loadRewrittenCode') && !(e instanceof UnwindException)) {
+                if (e.unwindException)
+                    e = e.unwindException;
+                else {
+                    e = new UnwindException(e);
+                    frame.setPC(node);
+                    e.shiftFrame(frame);
+                }
+            }
             if (!frame.isResuming() && e.error && e.error.toString() != 'Break') {
                 frame.setPC(node);
                 e.shiftFrame(frame);
@@ -354,9 +359,6 @@ Object.subclass('lively.ast.AcornInterpreter.Interpreter',
         var condVal = state.result;
         state.result = oldResult;
 
-        if (frame.isResuming() && this.wantsInterpretation(node.consequent, frame)) {
-            condVal = true; // resuming node inside true branch
-        }
         if (condVal) {
             this.accept(node.consequent, state);
         } else if (node.alternate) {
@@ -460,8 +462,12 @@ Object.subclass('lively.ast.AcornInterpreter.Interpreter',
         try {
             this.accept(node.block, state);
         } catch (e) {
-            if (lively.Config.get('loadRewrittenCode') && e.unwindException && e.toString() == 'Break')
-                throw e.unwindException;
+            if (lively.Config.get('loadRewrittenCode')) {
+                if (e instanceof UnwindException)
+                    throw e;
+                else  if (e.unwindException && e.toString() == 'Break')
+                    throw e.unwindException;
+            }
             hasError = true;
             state.error = err = e;
         }
@@ -1069,11 +1075,14 @@ Object.subclass('lively.ast.AcornInterpreter.Function',
         if (source) return source;
 
         var ast = this.getAst();
-        if (ast.sourceFile) {
-            source = new WebResource(URL.root.withFilename(ast.sourceFile)).get().content;
-            if (source)
-                return source.substring(ast.start, ast.end);
+        if (ast._parentEntry != null) {
+            source = __getClosure(ast.sourceFile || "[runtime]", ast._parentEntry).source;
         }
+        if (!source && ast.sourceFile) {
+            source = new WebResource(URL.root.withFilename(ast.sourceFile)).get().content;
+        }
+        if (source)
+            return source.substring(ast.start, ast.end);
 
         return escodegen.generate(this.getAst());
     }
@@ -1140,8 +1149,9 @@ Object.subclass('lively.ast.AcornInterpreter.Function',
         } else if (thisObject && lively.Class.isClass(thisObject) && fn.displayName) {
             $world.browseCode(thisObject.name, fn.displayName, (fn.sourceModule || thisObject.sourceModule).name());
         } else if (thisObject && thisObject.isMorph && this.node.type != 'Program') {
-            var ed = $world.openObjectEditorFor(thisObject);
-            ed.targetMorph.get('ObjectEditorScriptList').setSelection(fn.methodName || this.name());
+            $world.openObjectEditorFor(thisObject, function(ed) {
+                ed.targetMorph.get('ObjectEditorScriptList').setSelection(fn.methodName || this.name());
+            });
         } else
             //TODO: Add browse implementation for other functions
             throw new Error('Cannot browse anonymous function ' + this);
@@ -1343,7 +1353,7 @@ Object.subclass('lively.ast.AcornInterpreter.Frame',
         return this.arguments = argValues;
     },
 
-    getArguments: function(args) {
+    getArguments: function() {
         if (this.scope && this.scope.getMapping() != Global && this.func.isFunction())
             return this.arguments;
         throw new ReferenceError('arguments is not defined');
@@ -1433,7 +1443,7 @@ Object.subclass('lively.ast.AcornInterpreter.Frame',
                 return new URL(m.uri()).relativePathFrom(URL.root);
             });
         }
-        return this._internalModules.member(this.getOriginalAst().sourceFile);
+        return this._internalModules.include(this.getOriginalAst().sourceFile);
     }
 
 });

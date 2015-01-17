@@ -131,7 +131,7 @@ Object.subclass('lively.ide.CommandLineInterface.Command',
         this.endInterval();
         this.read(status.transport.responseText);
         lively.bindings.signal(this, 'end', this);
-        if (Object.isFunction(this._options.whenDone)) this._options.whenDone.call(null,this);
+        if (Object.isFunction(this._options.whenDone)) this._options.whenDone.call(null,null,this);
     }
 },
 'internal', {
@@ -158,10 +158,11 @@ Object.subclass('lively.ide.CommandLineInterface.Command',
 
 lively.ide.CommandLineInterface.Command.subclass('lively.ide.CommandLineInterface.PersistentCommand',
 "initializing", {
-    _pid: null
+    _pid: null,
+    _started: false
 },
 'testing', {
-    isRunning: function() { return !this.isDone() && !!this.getPid(); }
+    isRunning: function() { return !this.isDone() && (this._started || !!this.getPid()); }
 },
 "connection", {
 
@@ -176,12 +177,16 @@ lively.ide.CommandLineInterface.Command.subclass('lively.ide.CommandLineInterfac
             return;
         }
         var s = this.getSession();
-        s.sendTo(s.trackerId, selector, msg, function(answer) { thenDo(null, answer); });
+        var serverId = this._options.serverSession ? this._options.serverSession.id : s.trackerId;
+        s.sendTo(serverId, selector, msg, function(answer) { thenDo(null, answer); });
     }
 
 },
 "control", {
     start: function() {
+        if (this._started) return this;
+
+        this._started = true;
         var cmdInstructions = {
             command: this.getCommand(),
             cwd: this._options.cwd,
@@ -189,6 +194,12 @@ lively.ide.CommandLineInterface.Command.subclass('lively.ide.CommandLineInterfac
             stdin: this._options.stdin,
             isExec: false
         }, self = this;
+
+        if (this._options.server && !this._options.serverSession) {
+            this.startServerIDLookup();
+            return;
+        }
+
         this.send('runShellCommand', cmdInstructions, function(err, answer) {
             if (!answer) return;
             if (!answer.expectMoreResponses) { self.onEnd(answer.data); return; }
@@ -217,7 +228,7 @@ lively.ide.CommandLineInterface.Command.subclass('lively.ide.CommandLineInterfac
         this._code = exitCode;
         this._done = true;
         lively.bindings.signal(this, 'end', this);
-        if (Object.isFunction(this._options.whenDone)) this._options.whenDone.call(null,this);
+        if (Object.isFunction(this._options.whenDone)) this._options.whenDone.call(null,null,this);
     },
     checkIfCommandIsStillAttachedAndRunning: function(thenDo) {
         var pid = this.getPid();
@@ -252,22 +263,72 @@ lively.ide.CommandLineInterface.Command.subclass('lively.ide.CommandLineInterfac
     getPid: function() { return this._pid; },
 
     kill: function(signal, thenDo) {
-        if (this._done) { thenDo && thenDo(null); return}
-        var pid = this.getPid();
-        if (!pid) { thenDo && thenDo(new Error('Command has no pid!'), null); }
-        var self = this;
-        this.send('stopShellCommand', {signal: signal, pid:pid} , function(err, answer) {
-            err = err || (answer.data && answer.data.error);
-            if (err) show(err);
-            var running = answer && answer.commandIsRunning;
-            self._killed = !running; // hmmmmm
-            thenDo && thenDo(err, answer);
-        });
+        thenDo = Functions.once(thenDo);
+        if (this._done) {
+            thenDo && thenDo();
+        } else if (lively.ide.CommandLineInterface.isScheduled(this, this.getGroup())) {
+            this._killed = true;
+            lively.ide.CommandLineInterface.unscheduleCommand(this, this.getGroup());
+            thenDo && thenDo();
+        } else {
+            var pid = this.getPid();
+            if (!pid) { thenDo && thenDo(new Error('Command has no pid!'), null); }
+            var self = this;
+            this.send('stopShellCommand', {signal: signal, pid:pid} , function(err, answer) {
+                err = err || (answer.data && answer.data.error);
+                if (err) console.warn("stopShellCommand: " + err);
+                var running = answer && answer.commandIsRunning;
+                self._killed = !running; // hmmmmm
+                thenDo && thenDo(err, answer);
+            });
+        }
     }
 },
 'internal', {
     getCommand: function() {
         return ["/usr/bin/env", "bash", "-c", this._commandString];
+    },
+
+    startServerIDLookup: function() {
+        var cmd = this;
+        var url = this._options.server;
+        var sess = this.getSession();
+
+        Functions.composeAsync(
+            getIpAddress,
+            getLively2LivelyId,
+            filterTrackerSessions
+        )(function(err, sess) {
+            if (err || !sess) {
+                cmd._stderr = String(err);
+                show("server find session error: %s", err);
+                cmd.onEnd(404);
+            } else {
+                cmd._options.serverSession = sess;
+                cmd._started = false; // FIXME for re-entry
+                cmd.start();
+            }
+        })
+        
+        function getIpAddress(next) {
+            lively.shell.run("nslookup " + url, {}, function(err, cmd) {
+                var nsLookupString = cmd.resultString(true);
+                var answer = Strings.tableize(nsLookupString).filter(function(entry) { return entry[0] === "Address:" ? entry[1] : null }).last();
+                var ip = answer ? answer.last() : null;
+                next(ip ? null : new Error("nslookup failed"), ip);
+            });
+        }
+        
+        function getLively2LivelyId(ip, next) {
+            lively.net.tools.Functions.withTrackerSessionsDo(sess,
+            function(err, trackers) { next(err, ip, trackers); });
+        }
+        
+        function filterTrackerSessions(ip, trackers, next) {
+            var sess = trackers.detect(function(sess) { return sess.remoteAddress === ip; });
+            next(sess ? null : new Error("Could not find tracker session to run remote shell"), sess);
+        }
+
     }
 },
 'compatibility', {
@@ -281,8 +342,8 @@ Object.extend(lively.ide.CommandLineInterface, {
 
     reset: function() {
         this.rootDirectory = null,
-        this.commandQueue && Properties.forEachOwn(this.commandQueue, function(group, cmds) {
-            cmds.invoke('kill'); })
+        this.commandQueue && Properties.forEachOwn(this.commandQueue,
+            function(group, cmds) { cmds.forEach(function(cmd) { cmd.kill(); }); });
         this.commandQueue = {};
     },
     getGroupCommandQueue: function(group) {
@@ -341,15 +402,26 @@ Object.extend(lively.ide.CommandLineInterface, {
 
     run: function(commandString, options, thenDo) {
         /*
-        cmd = lively.ide.CommandLineInterface.run('ls', {sync:true}, function(cmd) { show(cmd.resultString()); });
-        cmd = lively.ide.CommandLineInterface.run('ls', {}, function(cmd) { show(cmd.resultString()); });
+        cmd = lively.ide.CommandLineInterface.run('ls', {sync:true}, function(err, cmd) { show(cmd.resultString()); });
+        cmd = lively.ide.CommandLineInterface.run('ls', {}, function(err, cmd) { show(cmd.resultString()); });
         cmd.resultString()
-        lively.ide.CommandLineInterface.run('grep 1 -', {stdin: '123\n567\n,4314'}, function(cmd) { show(cmd.resultString()); });
+        lively.ide.CommandLineInterface.run('grep 1 -', {stdin: '123\n567\n,4314'}, function(err, cmd) { show(cmd.resultString()); });
         lively.ide.CommandLineInterface.kill();
         */
 
         thenDo = Object.isFunction(options) ? options : thenDo;
         options = !options || Object.isFunction(options) ? {} : options;
+        
+        // rk 2014-12-18: changed lively.shell.run to take two args (err +
+        // cmd). In order to not break old code immediately we will fix things
+        // here but make clear that the old usage with one arg is deprecated.
+        if (thenDo && thenDo.length === 1) {
+          var realThenDo = thenDo
+          thenDo = function(err, cmd) {
+            console.warn("The callback of lively.shell.run now takes two arguments, \"err\" and \"cmd\"!");
+            realThenDo(cmd);
+          };
+        }
         if (thenDo) options.whenDone = thenDo;
 
         var session = lively.net.SessionTracker.getSession(),
@@ -378,6 +450,17 @@ Object.extend(lively.ide.CommandLineInterface, {
         return cmd;
     },
 
+    getOut: function(commandString, options, thenDo) {
+      // lively lively.shell.run, except the command result will be tested for
+      // successful exit and the resultString() will be passed as 2. parameter to
+      // thenDo.
+      if (typeof options === "function") { thenDo = options; options = null; }
+      return lively.ide.CommandLineInterface.run(commandString, options, function(err, cmd) {
+        thenDo && thenDo(!cmd.getCode() ? null : new Error(cmd.getStderr()),
+                         cmd.resultString(true));
+      });
+    },
+
     exec: function(commandString, options, thenDo) {
         /*
         show(lively.ide.CommandLineInterface.exec('expr 1 + 2', {sync:true}).resultString());
@@ -386,6 +469,17 @@ Object.extend(lively.ide.CommandLineInterface, {
         */
         thenDo = Object.isFunction(options) ? options : thenDo;
         options = !options || Object.isFunction(options) ? {} : options;
+
+        // rk 2014-12-18: changed lively.shell.run to take two args (err +
+        // cmd). In order to not break old code immediately we will fix things
+        // here but make clear that the old usage with one arg is deprecated.
+        if (thenDo && thenDo.length === 1) {
+          var realThenDo = thenDo
+          thenDo = function(err, cmd) {
+            console.warn("The callback of lively.shell.exec now takes two arguments, \"err\" and \"cmd\"!");
+            realThenDo(cmd);
+          };
+        }
         if (thenDo) options.whenDone = thenDo;
         options.exec = true;
         return this.run(commandString, options);
@@ -408,8 +502,8 @@ Object.extend(lively.ide.CommandLineInterface, {
         lively.ide.CommandLineInterface.runAll([
           {name: "cmd1", command: "du -sh ."},
           {name: "cmd2", command: "echo dir size ${cmd1}"},
-         ], function(commands) { show(Object.values(commands).invoke('resultString').join('\n')); })
-        lively.ide.CommandLineInterface.runAll([{name: "cmd1", command: "ls ."}], function(commands) { show(commands.cmd1.resultString()); });
+         ], function(err, commands) { show(Object.values(commands).invoke('resultString').join('\n')); })
+        lively.ide.CommandLineInterface.runAll([{name: "cmd1", command: "ls ."}], function(err, commands) { show(commands.cmd1.resultString()); });
         */
         thenDo = thenDo || Functions.Null;
         var results = {};
@@ -430,7 +524,7 @@ Object.extend(lively.ide.CommandLineInterface, {
                 results[name] = ea.transform ? ea.transform(cmd) : cmd;
                 next();
             });
-        }, thenDo.curry(results), this);
+        }, function() { thenDo && thenDo(null, results); }, this);
     },
 
     kill: function(cmd, thenDo) {
@@ -460,21 +554,30 @@ Object.extend(lively.ide.CommandLineInterface, {
         var platform = lively.shell.getServerPlatform(),
             sep = platform.match(/^win/) ? '\\' : '/',
             baseDir = lively.shell.cwd(),
-            needsSep = baseDir[baseDir.length-1] !== sep && path[0] === sep;
+            needsSep = baseDir[baseDir.length-1] !== sep && path[0] !== sep;
         return baseDir + (needsSep ? '/' : '') + path;
     },
 
     readFile: function(path, options, thenDo) {
+        if (typeof options === "function") { thenDo = options; options = null; }
         options = options || {};
         path = '"' + path + '"';
-        var cmd = this.run('cat ' + path);
+        var cmd = this.run('cat ' + path, options);
         if (options.onInput) lively.bindings.connect(cmd, 'stdout', options, 'onInput');
         if (options.onEnd) lively.bindings.connect(cmd, 'end', options, 'onEnd');
         if (thenDo) lively.bindings.connect(cmd, 'end', {thenDo: thenDo}, 'thenDo');
         return cmd;
     },
 
+    cat: function(path, options, thenDo) {
+        // like readfile but with err, content callback isntead of cmd
+        if (typeof options === "function") { thenDo = options; options = null; }
+        return lively.ide.CommandLineInterface.readFile(path, options, function(cmd) {
+          thenDo && thenDo(cmd.getCode() ? new Error(cmd.getStderr()) : null, cmd.getStdout()); });
+    },
+
     writeFile: function(path, options, thenDo) {
+        if (typeof options === "string") options = {content: options};
         options = options || {};
         options.content = options.content || '';
         path = '"' + path + '"';
@@ -494,6 +597,16 @@ Object.extend(lively.ide.CommandLineInterface, {
             });
     },
 
+    rm: function(path, thenDo) {
+      return lively.ide.CommandLineInterface.run("rm -rf " + path, {}, function(err, cmd) {
+        thenDo && thenDo(cmd.getCode() ? cmd.resultString(true) : null); });
+    },
+
+    ls: function(path, thenDo) {
+      return lively.ide.CommandLineSearch.findFiles("*", {cwd: path, depth: 1}, function(result) {
+        thenDo && thenDo(null, result); });
+    },
+
     diffIgnoringWhiteSpace: function(string1, string2, thenDo) {
         return lively.ide.CommandLineInterface.runAll([
             {command: 'mkdir -p diff-tmp/'},
@@ -501,7 +614,7 @@ Object.extend(lively.ide.CommandLineInterface, {
             {writeFile: 'diff-tmp/b', content: string2},
             {name: 'diff', command: 'git diff -w --no-index --histogram diff-tmp/a diff-tmp/b'},
             {command: 'rm -rfd diff-tmp/'}
-        ], function(result) { thenDo(result.diff.resultString(true)); });
+        ], function(err, result) { thenDo(result.diff.resultString(true)); });
     },
 
     diff: function(string1, string2, thenDo) {
@@ -511,7 +624,7 @@ Object.extend(lively.ide.CommandLineInterface, {
             {writeFile: 'diff-tmp/b', content: string2},
             {name: 'diff', command: 'git diff --no-index --histogram diff-tmp/a diff-tmp/b'},
             {command: 'rm -rfd diff-tmp/'}
-        ], function(result) { thenDo(result.diff.resultString(true)); });
+        ], function(err, result) { thenDo(result.diff.resultString(true)); });
     },
 
     // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -592,7 +705,7 @@ Object.extend(lively.ide.CommandLineInterface, {
         // lively.ide.CommandLineInterface.withShellCompletionsDo(function(err, compl) { show(compl.length) })
         var cmdLineInterface = lively.ide.CommandLineInterface;
         if (cmdLineInterface.shellCompletions) { doFunc(null, cmdLineInterface.shellCompletions); return; }
-        cmdLineInterface.exec('compgen  -abckA function', function(cmd) {
+        cmdLineInterface.exec('compgen  -abckA function', function(err, cmd) {
             // show(Objects.inspect(cmd, {maxDepth: 1}));
             cmdLineInterface.shellCompletions = cmd.getStdout()
                 .split('\n')
@@ -606,8 +719,11 @@ Object.extend(lively.ide.CommandLineInterface, {
         if (this._serverPlatform) return this._serverPlatform;
         var serverEval= URL.create(Config.nodeJSURL+'/NodeJSEvalServer/').asWebResource();
         return this._serverPlatform = serverEval.beSync().post('process.platform').content;
-    }
+    },
 
+    runInWindow: function(cmd, options) {
+        return lively.ide.tools.ShellCommandRunner.run(cmd, options);
+    }
 });
 
 // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -649,7 +765,7 @@ Object.extend(lively.ide.CommandLineSearch, {
         }
         var charsBefore = 80, charsAfter = 80;
         var cmd = Strings.format(baseCmd, fullPath, excludes, charsBefore, string, charsAfter);
-        lively.ide.CommandLineSearch.lastGrep = lively.shell.exec(cmd, function(r) {
+        lively.ide.CommandLineSearch.lastGrep = lively.shell.exec(cmd, function(err, r) {
             if (r.wasKilled()) return;
             lively.ide.CommandLineSearch.lastGrep = null;
             var lines = r.getStdout().split('\n').map(function(line) {
@@ -672,7 +788,7 @@ Object.extend(lively.ide.CommandLineSearch, {
     doBrowse: function(spec) {
         var modWrapper = lively.ide.sourceDB().addModule(spec.fileName),
             ff = modWrapper.ast();
-        if (spec.line) ff = ff.getSubElementAtLine(spec.line, 20/*depth*/) || ff;
+        if (spec.line && ff && ff.getSubElementAtLine) ff = ff.getSubElementAtLine(spec.line, 20/*depth*/) || ff;
         return ff && ff.browseIt({line: spec.line/*, browser: getCurrentBrowser()*/});
     },
 
@@ -736,7 +852,7 @@ Object.extend(lively.ide.CommandLineSearch, {
             commandString = timeFormatFix + Strings.format(
                 "env TZ=GMT LANG=en_US.UTF-8 "
               + "find %s %s \\( %s \\) -prune -o "
-              + "%s %s | xargs -I{} ls -lLd \"$timeformat\" \"{}\"",
+              + "%s %s -print0 | xargs -0 -I{} ls -lLd \"$timeformat\" \"{}\"",
                 rootDirectory, (options.re ? '-E ' : ''), excludes, searchPart, depth);
         return commandString;
     },
@@ -751,8 +867,8 @@ Object.extend(lively.ide.CommandLineSearch, {
             lastFind = lively.ide.CommandLineSearch.lastFind;
         if (lastFind) lastFind.kill();
         var result = [],
-            cmd = lively.ide.CommandLineInterface.exec(commandString, options, function(cmd) {
-                if (cmd.getCode() != 0) { console.warn(cmd.getStderr()); return []; }
+            cmd = lively.ide.CommandLineInterface.exec(commandString, options, function(err, cmd) {
+                if (cmd.getCode() != 0) console.warn(cmd.getStderr());
                 result = parseDirectoryList(cmd.getStdout(), rootDirectory);
                 callback && callback(result);
             });
@@ -763,8 +879,8 @@ Object.extend(lively.ide.CommandLineSearch, {
     interactivelyChooseFileSystemItem: function(prompt, rootDir, fileFilter, narrowerName, actions) {
         // usage:
         // lively.ide.CommandLineSearch.interactivelyChooseFileSystemItem(
-        //     'directory: '
-        //     lively.shell.exec('pwd', {sync:true}).resultString(),
+        //     'choose directory: '
+        //     lively.shell.exec("pwd", {sync: true}).getStdout().trim(),
         //     function(files) { return files.filterByKey('isDirectory'); },
         //     null,
         //     [function(candidate) { show(candidate); }])
@@ -776,12 +892,77 @@ Object.extend(lively.ide.CommandLineSearch, {
         // Example: input = "/foo/bar": match all subdirectories of
         // /foo/ that match "bar*".
         // "/foo/ bar" match all subdirectories of /foo/ that match "*bar*".
-        function filesToListItems(files) {
-            return files.map(function(file) {
-                if  (Object.isString(file)) file = {path: file, toString: function() { return this.path; }}
-                return {isListItem: true, string: file.path, value: file};
-            });
+
+        if (!rootDir) rootDir = lively.shell.exec("pwd", {sync: true}).getStdout().trim();
+        if (rootDir) rootDir = rootDir.replace(/\/?$/, "/");
+        var lastSearch;
+        var initialCandidates = rootDir ? [rootDir] : [];
+        var searchForMatching = Functions.debounce(300, function(input, callback) {
+            // var candidates = [input].compact(),
+            var candidates = [],
+                patternAndDir = extractDirAndPatternFromInput(input);
+            if (patternAndDir) doSearch(input, patternAndDir.pattern, patternAndDir.dir, fileFilter, callback);
+            else callback(candidates.map(fileToListItem));
+        });
+
+        lively.ide.tools.SelectionNarrowing.getNarrower({
+            name: narrowerName, //'lively.ide.browseFiles.changeBasePath.NarrowingList',
+            spec: {
+                candidates: initialCandidates,
+                prompt: prompt,
+                input: initialCandidates[0] || undefined,
+                candidatesUpdater: candidateBuilder,
+                maxItems: 25,
+                keepInputOnReactivate: false,
+                completeInputOnRightArrow: true,
+                completeOnEnterWithMultipleChoices: true,
+                actions: actions || [show]
+            }
+        });
+
+        // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+        function candidateBuilder(input, callback) {
+          callback(['searching...']);
+          if (input === "undefined" || input === "searching...") input = "";
+          searchForMatching(input, callback);
+        };
+
+        function doSearch(input, pattern, dir, filterFunc, thenDo) {
+            if (lastSearch) { lastSearch.kill(); lastSearch = null; }
+            var timeoutDelay = 5/*secs*/;
+            var continueAction = Functions.either(
+                // function timeout() { thenDo(fileListSoFar.map(fileToListItem)); },
+                function timeout() { thenDo([]); },
+                function filesFound(files) {
+                    thenDo((filterFunc || Functions.K)(files, input, pattern, dir)
+                        .uniqBy(filesAreEqual)
+                        .sort(sortFiles.curry(input))
+                        .map(fileToListItem)
+                        .compact()); });
+
+            continueAction[0].delay(timeoutDelay); // in case findFiles crashes
+            lastSearch = lively.ide.CommandLineSearch.findFiles(
+                pattern, {rootDirectory: dir, depth: 1}, continueAction[1]);
         }
+
+        function ignoreInvalidFiles(file) { return file.path !== "/"; }
+
+        function ensureFile(f) {
+            return Object.isString(f) ?
+                {path: f, isDirectory: true, toString: function() { return this.path; }} : f;
+        }
+
+        function fileToListItem(file) {
+            var path = String(file.path);
+            if (!path.length) return null;
+            if (file.isDirectory) path = file.path = path.replace(/\/?$/, "/")
+            return {
+                isListItem: true,
+                string: path,
+                value: file}
+        }
+
         function extractDirAndPatternFromInput(input) {
             var result = {}, lastSlash = input.lastIndexOf('/');
             if (!lastSlash) return null; // don't do search
@@ -791,42 +972,20 @@ Object.extend(lively.ide.CommandLineSearch, {
             result.pattern = pattern += '*';
             return result;
         }
-        var lastSearch;
-        function doSearch(fileListSoFar, pattern, dir, filterFunc, thenDo) {
-            if (lastSearch) { lastSearch.kill(); lastSearch = null; }
-            var continued = false, timeoutDelay = 5/*secs*/;
-            // in case findFiles crashes
-            (function() {
-                if (continued) return;
-                continued = true; thenDo(filesToListItems(fileListSoFar));
-            }).delay(timeoutDelay);
-            lastSearch = lively.ide.CommandLineSearch.findFiles(pattern, {rootDirectory: dir, depth: 1}, function(files) {
-                if (continued) return; continued = true;
-                filterFunc = filterFunc || Functions.K;
-                fileListSoFar = fileListSoFar.concat(filterFunc(files).pluck('path')).uniq();
-                thenDo(filesToListItems(fileListSoFar));
-            });
+
+        function filesAreEqual(fileA, fileB) {
+            return fileA.path.replace(/\/$/, '') == fileB.path.replace(/\/$/, '');
         }
-        var searchForMatching = Functions.debounce(300, function(input, callback) {
-            var candidates = [input], patternAndDir = extractDirAndPatternFromInput(input);
-            if (patternAndDir) doSearch(candidates, patternAndDir.pattern, patternAndDir.dir, fileFilter, callback);
-            else callback(filesToListItems(candidates));
-        });
-        function candidateBuilder(input, callback) { callback(['searching...']); searchForMatching(input, callback); };
-        var initialCandidates = [rootDir];
-        lively.ide.tools.SelectionNarrowing.getNarrower({
-            name: narrowerName, //'lively.ide.browseFiles.changeBasePath.NarrowingList',
-            spec: {
-                candidates: initialCandidates,
-                prompt: prompt,
-                input: initialCandidates[0].toString(),
-                candidatesUpdater: candidateBuilder,
-                maxItems: 25,
-                keepInputOnReactivate: true,
-                completeInputOnRightArrow: true,
-                actions: actions || [show]
-            }
-        });
+
+        function sortFiles(input, fileA, fileB) {
+            if (input === fileA.path) return -2;
+            if (input === fileB.path) return 2;
+            if (fileA.isDirectory && !fileB.isDirectory) return -1;
+            if (!fileA.isDirectory && fileB.isDirectory) return 1;
+            if (fileA.path.toLowerCase() < fileB.path.toLowerCase()) return -1;
+            if (fileA.path.toLowerCase() > fileB.path.toLowerCase()) return 1;
+            return 0;
+        }
     }
 
 });
@@ -903,21 +1062,31 @@ Object.subclass("lively.ide.FilePatch",
 'initializing', {
     read: function(patchString) {
         // simple parser for unified patch format;
-        var lines = patchString.split('\n'), line, hunks = this.hunks = [];
+        var lines = Strings.lines(patchString),
+            line, hunks = this.hunks = [];
         if (lines[lines.length-1] === '') lines.pop();
 
         // 1: parse header
-        // line 0 like: "diff --git a/test.txt b/test.txt\n"
-        line = lines.shift();
-        if (line.match(/^diff/)) { this.command = line; line = lines.shift(); }
-        if (line.match('^index')) { line = lines.shift(); }
-
-        lively.assert(line.match(/^---/), 'patch parser line 2');
-        this.pathOriginal = line.split(' ').last();
-        line = lines.shift();
-
-        lively.assert(line.match(/^\+\+\+/), 'patch parser line 3');
-        this.pathChanged = line.split(' ').last();
+        // line 0 like: "diff --git a/test.txt b/test.txt\n". Also support
+        // directly parse hunks if we see no header.
+        if (!lines[0].startsWith("@@")) { // otherwise, no header
+            line = lines.shift();
+            this.command = line; line = lines.shift();
+    
+            // line 1 customized, depending on tool like "======" or "index zyx...abc"
+            if (!line.startsWith("---")) line = lines.shift();
+    
+            // lines 2,3 file name removed, file name added
+            var match = line.match(/^---\s*(.*)/);
+    
+            lively.assert(match && match[1], 'patch parser line 2 ' + match);
+            this.pathOriginal = match[1];
+            line = lines.shift();
+    
+            var match = line.match(/^\+\+\+\s*(.*)/);
+            lively.assert(match && match[1], 'patch parser line 3 ' + match);
+            this.pathChanged = match[1];
+        }
 
         while (lines.length > 0) {
             hunks.push(lively.ide.FilePatchHunk.read(lines));
@@ -926,17 +1095,23 @@ Object.subclass("lively.ide.FilePatch",
     }
 },
 'patch creation', {
-    createPatchStringHeader: function() {
+
+    reverse: function() {
+        return lively.ide.FilePatch.read(this.createPatchString(true));
+    },
+
+    createPatchStringHeader: function(reverse) {
         var parts = [];
         if (this.command) parts.push(this.command);
-        parts.push('--- ' + this.pathOriginal);
-        parts.push('+++ ' + this.pathChanged);
+        parts.push('--- ' + (reverse ? this.pathChanged : this.pathOriginal));
+        parts.push('+++ ' + (reverse ? this.pathOriginal : this.pathChanged));
         return parts.join('\n');
     },
 
-    createPatchString: function() {
-        return this.createPatchStringHeader() + '\n'
-             + this.hunks.invoke('createPatchString').join('\n');
+    createPatchString: function(reverse) {
+        return this.createPatchStringHeader(reverse) + '\n'
+             + this.hunks.invoke('createPatchString', reverse).join('\n')
+             + "\n"
     },
 
     createPatchStringFromRows: function(startRow, endRow, forReverseApply) {
@@ -953,6 +1128,40 @@ Object.subclass("lively.ide.FilePatch",
         if (hunkPatches.length === 0) return null;
         return this.createPatchStringHeader() + '\n' + hunkPatches.join('\n') + '\n';
     }
+},
+"accessing", {
+
+  changesByLines: function() {
+      return this.hunks.invoke("changesByLines").flatten();
+  }
+
+},
+"patching", {
+
+  patch: function(string) {
+      return this.changesByLines().reduce(function(patchedLines, change, i) {
+          var startAddition = change.lineNoAdded-1,
+              removed = change.removed.replace(/\n$/, ""),
+              noLinesRemoved = removed ? Strings.lines(removed).length : 0,
+              reallyRemoved = patchedLines.slice(startAddition, startAddition+noLinesRemoved).join('\n');
+
+          if (removed !== reallyRemoved) {
+              var msg = Strings.format("Change %s not matching: Expected \"%s\", got \"%s\"",
+                                       i+1, removed, reallyRemoved);
+              throw new Error(msg);
+          }
+
+          var added = change.added ? change.added : "",
+              endAddition = startAddition + noLinesRemoved,
+              result = patchedLines.slice(0, startAddition)
+                          .concat(added ? Strings.lines(added.replace(/\n$/, "")) : [])
+                          .concat(patchedLines.slice(endAddition));
+
+          // show("%o", result.slice(startAddition-10, endAddition+10));
+          return result;
+      }, Strings.lines(string)).join("\n");
+  }
+
 });
 
 Object.extend(lively.ide.FilePatch, {
@@ -981,9 +1190,11 @@ Object.subclass("lively.ide.FilePatchHunk",
     }
 },
 'patch creation', {
-    createPatchString: function() {
-        return [this.header].concat(this.lines).join('\n');
+
+    createPatchString: function(reverse) {
+        return this.printHeader(reverse) + "\n" + this.printLines(reverse);
     },
+
     createPatchStringFromRows: function(startRow, endRow, forReverseApply) {
         // this methods takes the diff hunk represented by "this" and produces
         // a new hunk (as a string) that will change only the lines from startRow
@@ -1045,6 +1256,61 @@ Object.subclass("lively.ide.FilePatchHunk",
         return [header].concat(lines).join('\n');
     }
 
+},
+"accessing", {
+  
+    changesByLines: function() {
+        var self = this;
+        var baseLineAdded = this.changedLine;
+        var baseLineRemoved = this.originalLine;
+        var lineDiff = 0;
+        var result =  this.lines.reduce(function(result, line, i) {
+            if (line[0] === " ") {
+                if (result.current) {
+                  result.changes.push(result.current);
+                  result.current = null;
+                }
+                return result;
+            };
+
+            var change = result.current
+                     || (result.current = {
+                          lineNoAdded: baseLineAdded+i+lineDiff,
+                          lineNoRemoved: baseLineRemoved+i+lineDiff,
+                          added: "", removed: ""});
+
+            if (line[0] === "+") { change.added += line.slice(1) + "\n"; lineDiff++; }
+            else if (line[0] === "-") { change.removed += line.slice(1) + "\n"; lineDiff--; }
+            return result;
+        }, {changes: [], current: null});
+        if (result.current) result.changes.push(result.current);
+        return result.changes;
+    }
+
+},
+"printing", {
+
+    printHeader: function(reverse) {
+        var sub = reverse ?
+          this.changedLine + "," + this.changedLength :
+          this.originalLine + "," + this.originalLength;
+        var add = reverse ?
+          this.originalLine + "," + this.originalLength :
+          this.changedLine + "," + this.changedLength
+        return Strings.format("@@ -%s +%s @@", sub, add);
+    },
+
+    printLines: function(reverse) {
+      return (reverse ? 
+        this.lines.map(function(line) {
+          switch (line[0]) {
+            case ' ': return line;
+            case '+': return "-" + line.slice(1);
+            case '-': return "+" + line.slice(1);
+          }
+        }) : this.lines).join("\n");
+    }
+
 });
 
 Object.extend(lively.ide.FilePatchHunk, {
@@ -1056,7 +1322,7 @@ lively.ide.CommandLineInterface.SpellChecker = {
         // for input "hrlp" aspell returns the output:
         // @(#) International Ispell Version 3.1.20 (but really Aspell 0.60.6.1)
         // & hrlp 5 0: help, harelip, helper, Harold, herald
-        lively.ide.CommandLineInterface.run('aspell -a', {stdin: word}, function(cmd) {
+        lively.ide.CommandLineInterface.run('aspell -a', {stdin: word}, function(err, cmd) {
             var out = cmd.resultString();
             if (cmd.getCode()) { thenDo(out, []); return }
             var result = Strings.lines(out)[1];

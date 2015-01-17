@@ -39,58 +39,6 @@ lively.BuildSpec('lively.morphic.tools.PartsBin', {
             name: "morePane",
             sourceModule: "lively.morphic.Core",
             submorphs: [{
-                _BorderColor: Color.rgb(189,190,192),
-                _BorderRadius: 5,
-                _BorderWidth: 1,
-                _Extent: lively.pt(58.0,21.0),
-                _Position: lively.pt(137.7,393.9),
-                className: "lively.morphic.Button",
-                label: "move",
-                layout: {moveVertical: true},
-                name: "movePartButton",
-                padding: lively.rect(5,0,0,0),
-                sourceModule: "lively.morphic.Widgets",
-                connectionRebuilder: function connectionRebuilder() {
-                lively.bindings.connect(this, "fire", this.get("PartsBinBrowser"), "interactivelyMoveSelectedPartItem", {});
-            }
-            },{
-                _BorderColor: Color.rgb(189,190,192),
-                _BorderRadius: 5,
-                _BorderWidth: 1,
-                _Extent: lively.pt(66.0,21.0),
-                _Position: lively.pt(70.1,393.9),
-                className: "lively.morphic.Button",
-                isPressed: false,
-                label: "remove",
-                layout: {moveVertical: true},
-                name: "removePartButton",
-                showsMorphMenu: true,
-                sourceModule: "lively.morphic.Widgets",
-                style: {
-                    borderRadius: 0,
-                    padding: lively.rect(0,3,0,0)
-                },
-                connectionRebuilder: function connectionRebuilder() {
-                lively.bindings.connect(this, "fire", this.get("PartsBinBrowser"), "interactivelyRemoveSelectedPartItem", {});
-            }
-            },{
-                _BorderColor: Color.rgb(189,190,192),
-                _BorderRadius: 5,
-                _BorderWidth: 1,
-                _Extent: lively.pt(50.0,21.0),
-                _Position: lively.pt(19.2,393.9),
-                className: "lively.morphic.Button",
-                isPressed: false,
-                label: "load",
-                layout: {moveVertical: true},
-                name: "loadPartButton",
-                padding: lively.rect(5,0,0,0),
-                showsMorphMenu: true,
-                sourceModule: "lively.morphic.Widgets",
-                connectionRebuilder: function connectionRebuilder() {
-                lively.bindings.connect(this, "fire", this.get("PartsBinBrowser"), "loadAndOpenSelectedPartItem", {});
-            }
-            },{
                 _ClipMode: "hidden",
                 _Extent: lively.pt(258.0,17.0),
                 _FontFamily: "Arial, sans-serif",
@@ -165,23 +113,6 @@ lively.BuildSpec('lively.morphic.tools.PartsBin', {
                 name: "selectedPartSpaceName",
                 sourceModule: "lively.morphic.TextCore"
             },{
-                _BorderColor: Color.rgb(189,190,192),
-                _BorderRadius: 5,
-                _BorderWidth: 1,
-                _Extent: lively.pt(85.0,21.0),
-                _Position: lively.pt(196.0,393.0),
-                className: "lively.morphic.Button",
-                label: "copy",
-                layout: {moveVertical: true},
-                name: "copyPartButton",
-                padding: lively.rect(5,0,0,0),
-                showsMorphMenu: true,
-                sourceModule: "lively.morphic.Widgets",
-                connectionRebuilder: function connectionRebuilder() {
-                // lively.bindings.connect(this, "fire", this.get("PartsBinBrowser"), "interactivelyMoveSelectedPartItem", {});
-                lively.bindings.connect(this, "fire", this.get("PartsBinBrowser"), "interactivelyCopySelectedPartItem", {});
-            }
-            },{
                 _Extent: lively.pt(67.0,25.0),
                 _FontFamily: "Arial, sans-serif",
                 _FontSize: 9,
@@ -204,18 +135,6 @@ lively.BuildSpec('lively.morphic.tools.PartsBin', {
                 name: "shareLink",
                 sourceModule: "lively.morphic.TextCore",
                 textString: "Share Link"
-            },{
-                _BorderColor: Color.rgb(189,190,192),
-                _BorderRadius: 5,
-                _BorderWidth: 1,
-                _Extent: lively.pt(64.4,21.7),
-                _Position: lively.pt(285.0,394.0),
-                className: "lively.morphic.Button",
-                label: "modules",
-                layout: {moveVertical: true},
-                name: "editModulesButton",
-                padding: lively.rect(5,0,0,0),
-                sourceModule: "lively.morphic.Widgets"
             },{
                 _BorderColor: Color.rgb(169,169,169),
                 _BorderRadius: 7,
@@ -241,7 +160,100 @@ lively.BuildSpec('lively.morphic.tools.PartsBin', {
                 name: "CommitLog",
                 sourceModule: "lively.morphic.TextCore",
                 syntaxHighlightingWhileTyping: false
-            }]
+            },
+{
+    _BorderColor: Color.rgb(189,190,192),
+    _Extent: lively.pt(52,20),
+    _Position: lively.pt(20+52*0,390),
+    className: "lively.morphic.Button",
+    label: "load",
+    layout: {moveVertical: true},
+    name: "loadPartButton",
+    padding: lively.rect(5,0,0,0),
+    showsMorphMenu: true,
+    sourceModule: "lively.morphic.Widgets",
+    connectionRebuilder: function connectionRebuilder() {
+        lively.bindings.connect(this, "fire", this.get("PartsBinBrowser"), "loadAndOpenSelectedPartItem", {});
+    }
+},
+{
+    _BorderColor: Color.rgb(189,190,192),
+    _Extent: lively.pt(52,20),
+    _Position: lively.pt(20+52*1,390),
+    className: "lively.morphic.Button",
+    label: "remove",
+    layout: {moveVertical: true},
+    name: "removePartButton",
+    showsMorphMenu: true,
+    sourceModule: "lively.morphic.Widgets",
+    padding: lively.rect(5,0,0,0),
+    connectionRebuilder: function connectionRebuilder() {
+        lively.bindings.connect(this, "fire", this.get("PartsBinBrowser"), "interactivelyRemoveSelectedPartItem", {});
+    }
+},
+{
+    _BorderColor: Color.rgb(189,190,192),
+    _BorderRadius: 5,
+    _BorderWidth: 1,
+    _Extent: lively.pt(52,20),
+    _Position: lively.pt(20+52*2,390),
+    className: "lively.morphic.Button",
+    label: "move",
+    layout: {moveVertical: true},
+    name: "movePartButton",
+    padding: lively.rect(5,0,0,0),
+    sourceModule: "lively.morphic.Widgets",
+    connectionRebuilder: function connectionRebuilder() {
+        lively.bindings.connect(this, "fire", this.get("PartsBinBrowser"), "interactivelyMoveSelectedPartItem", {});
+    }
+},
+{
+    _BorderColor: Color.rgb(189,190,192),
+    _Extent: lively.pt(52,20),
+    _Position: lively.pt(20+52*3,390),
+    className: "lively.morphic.Button",
+    label: "copy",
+    layout: {moveVertical: true},
+    name: "copyPartButton",
+    padding: lively.rect(5,0,0,0),
+    showsMorphMenu: true,
+    sourceModule: "lively.morphic.Widgets",
+    connectionRebuilder: function connectionRebuilder() {
+        // lively.bindings.connect(this, "fire", this.get("PartsBinBrowser"), "interactivelyMoveSelectedPartItem", {});
+        lively.bindings.connect(this, "fire", this.get("PartsBinBrowser"), "interactivelyCopySelectedPartItem", {});
+    }
+},
+{
+    _BorderColor: Color.rgb(189,190,192),
+    _Extent: lively.pt(52,20),
+    _Position: lively.pt(20+52*4,390),
+    className: "lively.morphic.Button",
+    label: "revert",
+    layout: {moveVertical: true},
+    name: "revertButton",
+    padding: lively.rect(5,0,0,0),
+    sourceModule: "lively.morphic.Widgets",
+    connectionRebuilder: function connectionRebuilder() {
+        lively.bindings.connect(this, "fire", this.get("PartsBinBrowser"), "interactivelyRevertSelectedPart", {});
+    }
+},
+// {
+//     _BorderColor: Color.rgb(189,190,192),
+//     _Extent: lively.pt(52,20),
+//     _Position: lively.pt(20+52*4,390),
+//     className: "lively.morphic.Button",
+//     label: "modules",
+//     layout: {moveVertical: true},
+//     name: "editModulesButton",
+//     padding: lively.rect(5,0,0,0),
+//     sourceModule: "lively.morphic.Widgets",
+//     connectionRebuilder: function connectionRebuilder() {
+//         // TODO implement #interactivelyEditModulesOfSelectedPart
+//         // lively.bindings.connect(this, "fire", this.get("PartsBinBrowser"), "interactivelyEditModulesOfSelectedPart", {});
+//     }
+// },
+
+            ]
         },{
             _BorderColor: Color.rgb(210,210,210),
             _BorderWidth: 1.258,
@@ -501,9 +513,7 @@ lively.BuildSpec('lively.morphic.tools.PartsBin', {
             this.addExternalCategory(categoryName, url, true);
         } else {
             this.categories[categoryName] = {isSpecialCategory: true};
-            if (!doNotUpdate) {
-                this.updateCategoryList(categoryName);
-            }
+            this.updateCategoryList(categoryName, doNotUpdate);
         }
     },
         addCategoryInteractively: function addCategoryInteractively() {
@@ -522,7 +532,7 @@ lively.BuildSpec('lively.morphic.tools.PartsBin', {
         if (createPath) {
             this.getPartsSpaceForCategory(categoryName).ensureExistance();
         }
-        this.updateCategoryList(categoryName)
+        this.updateCategoryList(categoryName);
     },
         addMorphsForPartItems: function addMorphsForPartItems(partItems, doNotSort) {
         this.removeParts();
@@ -553,7 +563,7 @@ lively.BuildSpec('lively.morphic.tools.PartsBin', {
         partsSpace.load(true);
     },
         commitLogString: function commitLogString(metaInfo) {
-        if (!metaInfo.changes) return "";
+        if (!metaInfo || !metaInfo.changes) return "";
         return metaInfo.changes
             .reverse()
             .collect(function(ea) {
@@ -573,42 +583,43 @@ lively.BuildSpec('lively.morphic.tools.PartsBin', {
         if (URL.root.hostname !== this.partsBinURL().hostname) {
             show('Search not available.'); return; }
 
-            this.showMsg("searching...");
-            var pb = this;
-            var searchString = this.get('searchText').textString;
-            if (!searchString || searchString.length === 0) return;
-            // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-            // find parts via cmdline
-            var partsBinPath = this.partsBinURL().relativePathFrom(URL.root),
-                findPath = "$WORKSPACE_LK/" + partsBinPath.replace(/\/\//g, '\/');
-            function doCommandLineSearch(next, searchString) {
-                    var cmdTemplate = "find %s "
-                                    + "\\( -name node_modules -o -name '.svn' -o -name '.git' \\) -type d -prune "
-                                    + "-o -type f -iname '*%s*.json*' -print",
-                    cmd = Strings.format(cmdTemplate, findPath, searchString);
-                lively.require('lively.ide.CommandLineInterface').toRun(function() {
-                    lively.shell.exec(cmd, next);
-                });
-            }
-            function processResult(next, searchCmd) {
-                if (searchCmd.getCode()) {
-                    pb.showMsg('Search failure:\n' + searchCmd.getStderr);
-                    next([]);
-                    return;
-                }
-                var lines = Strings.lines(searchCmd.getStdout());
-                var partItemURLs = lines.map(function(line) {
-                    line = line.replace(/\/\//g, '\/') // double path slashes
-                    var partPath = line.split(partsBinPath).last();
-                    return pb.partsBinURL().withFilename(partPath);
-                });
-                next(partItemURLs)
-            }
-            function listPartItems(partItemURLs) {
-                pb.addPartsFromURLs(partItemURLs);
-            }
+        this.showMsg("searching...");
+        var pb = this;
+        var searchString = this.get('searchText').textString;
+        if (!searchString || searchString.length === 0) return;
         // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+        // find parts via cmdline
+        var partsBinPath = this.partsBinURL().relativePathFrom(URL.root),
+            findPath = "$WORKSPACE_LK/" + partsBinPath.replace(/\/\//g, '\/');
         doCommandLineSearch(processResult.curry(listPartItems), searchString);
+
+        // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+        function doCommandLineSearch(next, searchString) {
+                var cmdTemplate = "find %s "
+                                + "\\( -name node_modules -o -name '.svn' -o -name '.git' \\) -type d -prune "
+                                + "-o -type f -iname '*%s*.json*' -print",
+                cmd = Strings.format(cmdTemplate, findPath, searchString);
+            lively.require('lively.ide.CommandLineInterface').toRun(function() {
+                lively.shell.exec(cmd, next);
+            });
+        }
+        function processResult(next, err, searchCmd) {
+            if (searchCmd.getCode()) {
+                pb.showMsg('Search failure:\n' + searchCmd.getStderr);
+                next([]);
+                return;
+            }
+            var lines = Strings.lines(searchCmd.getStdout());
+            var partItemURLs = lines.map(function(line) {
+                line = line.replace(/\/\//g, '\/') // double path slashes
+                var partPath = line.split(partsBinPath).last();
+                return pb.partsBinURL().withFilename(partPath);
+            });
+            next(partItemURLs)
+        }
+
+        function listPartItems(partItemURLs) { pb.addPartsFromURLs(partItemURLs); }
     },
         ensureCategories: function ensureCategories() {
         if (!this.categories)
@@ -641,6 +652,34 @@ lively.BuildSpec('lively.morphic.tools.PartsBin', {
         })
         lively.morphic.Menu.openAtHand('Select category', items);
     },
+        interactivelyRevertSelectedPart: function interactivelyRevertSelectedPart(partMorph) {
+          var version = this.get("selectedPartVersions").getSelection();
+          if (!version) return $world.alert("No version selected!");
+          var item = this.selectedPartItem;
+          if (!version) return $world.alert("No part selected!");
+
+          var urls = [item.getFileURL(),
+                      item.getHTMLLogoURL(),
+                      item.getMetaInfoURL()];
+
+          var prompt = 'Do you really want to revert \n'
+                      + item.anem
+                      + '\nto its version from\n'
+                      + new Date(version.date).format('yy/mm/dd hh:MM:ss') + '?';
+
+          $world.confirm(prompt, function(input) {
+              if (!input) { $world.alertOK('Revert aborted.'); return; }
+              lively.net.Wiki.revertResources(urls, version, function(err) {
+                  err ? $world.alert('Revert failed:\n' + (err.stack || err)) :
+                        $world.alertOK(item.name + ' successfully reverted.');
+                  lively.bindings.connect(item, 'partVersions', self, 'setSelectedPartItem', {
+                    removeAfterUpdate: true,
+                    converter: function() { return this.sourceObj; },
+                  });
+                  item.loadPartVersions(true);
+              });
+          });
+    },
         interactivelyMoveSelectedPartItem: function interactivelyMoveSelectedPartItem(partMorph) {
         var partItem = this.selectedPartItem, categories = this.categories, self = this;
         if (!partItem) { alert('no item selected'); return }
@@ -670,7 +709,7 @@ lively.BuildSpec('lively.morphic.tools.PartsBin', {
         loadAndOpenSelectedPartItem: function loadAndOpenSelectedPartItem(partMorph) {
         var item = this.selectedPartItem;
         if (!item) return;
-        connect(item, 'part', this, 'openPart');
+        connect(item, 'part', this, 'openPart', {removeAfterUpdate: true});
         var selectedVersion = this.get('selectedPartVersions').selection,
             rev = selectedVersion ? selectedVersion.version : null;
         item.loadPart(true, null, rev);
@@ -925,6 +964,7 @@ lively.BuildSpec('lively.morphic.tools.PartsBin', {
         }
     },
         updateCategoriesDictFromPartsBin: function updateCategoriesDictFromPartsBin(thenDo) {
+        delete this.categories;
         this.ensureCategories();
         var webR = new WebResource(this.partsBinURL()).noProxy().beAsync().getSubElements();
     
@@ -948,10 +988,11 @@ lively.BuildSpec('lively.morphic.tools.PartsBin', {
             }
         });
     },
-        updateCategoryList: function updateCategoryList(optCategoryName) {
+        updateCategoryList: function updateCategoryList(optCategoryName, doNotUpdate) {
         this.get('categoryList').updateList(
         Properties.own(this.categories).sortBy(function(name) { return name.toLowerCase()}));
-        this.get('categoryList').setSelection(optCategoryName)
+        if (!doNotUpdate)
+            this.get('categoryList').setSelection(optCategoryName)
     },
         updatePartsBinURLChooser: function updatePartsBinURLChooser() {
         // this.updatePartsBinURLChooser();

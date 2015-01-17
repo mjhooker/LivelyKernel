@@ -18,6 +18,7 @@ lively.BuildSpec('lively.morphic.tools.FilterableList', {
 	font-size: 9pt !important;\n\
 }",
     className: "lively.morphic.Box",
+    connections: {rendered: {}},
     droppingEnabled: true,
     filterState: {
         filterTimeout: 100,
@@ -354,9 +355,9 @@ lively.BuildSpec('lively.morphic.tools.FilterableList', {
             filters = this.filterState.filters,
             sortKey = this.filterState.sortKey,
             items = this.filterState.items,
-            processItems = Functions.compose(
+            processItems = lively.lang.fun.compose(
                 this.itemsFilter.curry(filters),
-                sortKey ? this.itemsSort.curry(sortKey) : Functions.K,
+                sortKey ? this.itemsSort.curry(sortKey) : lively.lang.fun.K,
                 this.itemsForList.bind(this)),
             processedItems = processItems(items);
     
@@ -370,6 +371,7 @@ lively.BuildSpec('lively.morphic.tools.FilterableList', {
         // this.get('resultText').textString = processedItems.length + ' matches';
         list.isInLayoutCycle = false;
         list.applyLayout();
+        lively.bindings.signal(this, "rendered");
         thenDo && thenDo.call(this, null, processItems);
     },
 
@@ -394,6 +396,18 @@ lively.BuildSpec('lively.morphic.tools.FilterableList', {
     setList: function setList(items) {
         this.filterState.items = items;
         this.renderDebounced();
+    },
+
+    setSelection: function setSelection (sel) {
+        this.get('list').setSelection(sel);
+    },
+
+    getSelection: function getSelection () {
+        return this.get('list').getSelection();
+    },
+    
+    getSelectedItem: function() {
+        return this.get('list').getSelectedItem();
     },
 
     userQueryForSort: function userQueryForSort() {

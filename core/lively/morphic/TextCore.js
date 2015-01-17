@@ -287,7 +287,8 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
         fontFamily: 'Helvetica',
         textColor: Config.get('textColor'),
         fontSize: 10,
-        padding: Rectangle.inset(4, 2)
+        padding: Rectangle.inset(4, 2),
+        selectable: true
     },
 
     autoAdjustPadding: true,
@@ -307,6 +308,7 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
     applyStyle: function($super, spec) {
         if (!spec) return this;
         if (spec.allowInput !== undefined) this.setInputAllowed(spec.allowInput); // also sets handstyle that might be overriden
+        if (spec.selectable !== undefined) this.setIsSelectable(spec.selectable); // also sets handstyle that might be overriden
         $super(spec);
         if (spec.fixedWidth !== undefined) this.setFixedWidth(spec.fixedWidth);
         if (spec.fixedHeight !== undefined) this.setFixedHeight(spec.fixedHeight);
@@ -449,7 +451,13 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
         this.morphicSetter('InputAllowed', bool);
         this.setHandStyle(bool ? null : 'default');
         return this.allowInput = bool;
-    }
+    },
+
+    isSelectable: function() {
+      var val = this.morphicGetter('IsSelectable');
+      return typeof val === "undefined" ? true : val;
+    },
+    setIsSelectable: function(value) { this.morphicSetter('IsSelectable', value); }
 
 },
 'rendering', {
@@ -518,7 +526,7 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
             fixedWidth = isClip || this.fixedWidth,
             fixedHeight = isClip || this.fixedHeight,
             style = textNode.style,
-            prefix, padding;
+            prefix, padding, isMoz = !!UserAgent.fireFoxVersion;
 
         if (fixedWidth || fixedHeight) {
             // only compute it when needed
@@ -534,6 +542,7 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
             var minWidth = this.getMinTextWidth()
             style.minWidth = minWidth ? minWidth + 'px' : null;
         }
+        if (isMoz) style.width = style.minWidth;
 
         if (fixedHeight) {
             var paddingHeight = padding ? padding.top() + padding.bottom() : 0,
@@ -543,6 +552,7 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
             var minHeight = this.getMinTextHeight();
             style.minHeight = minHeight ? minHeight + 'px' : null;
         }
+        if (isMoz) style.height = style.minHeight;
     },
 
     computeRealTextBounds: function() {
@@ -668,6 +678,10 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
 
         if (evt.isShiftDown()) {
             this.priorSelectionRange = this.getSelectionRange();
+        }
+        
+        if (UserAgent.isChrome && UserAgent.isMobile) {
+            this.onKeyPress(evt);
         }
 
         evt.stop();
@@ -1685,7 +1699,7 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
         function isWhiteSpace(c) { return c === '\t' || c === ' '; }
         function isAlpha(s) {
             var regEx = /^[a-zA-Z0-9\-]+$/;
-            return s.match(regEx);
+            return (s || '').match(regEx);
         };
         function periodWithDigit(c, prev) {
             // return true iff c is a period and prev is a digit
@@ -1793,9 +1807,9 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
                 try { return eval(str = "("+__evalStatement+")")} catch (e) { return eval(str = __evalStatement) }
                 };
         try {
-            var result = interactiveEval.call(ctx);
-            if (Config.changesetsExperiment && $world.getUserName() &&
-        localStorage.getItem("LivelyChangesets:" +  $world.getUserName() + ":" + location.pathname) !== "off")
+            var result = interactiveEval.call(ctx),
+                itemName = "Changesets:" +  $world.getUserName() + ":" + location.pathname;
+            if (Config.changesetsExperiment && $world.getUserName() && lively.LocalStorage.get(itemName) !== "off")
                 lively.ChangeSet.logDoit(str, ctx.lvContextPath());
             return result;
         } catch(e) {throw e}
@@ -2390,12 +2404,13 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
         statusMorph.ignoreEvents();
         // FIXME getSelectionBounds does not work yet when there is a null selection
         if (this.isFocused()) {
-            statusMorph.align(statusMorph.bounds().topLeft(),
-                              this.worldPoint(this.innerBounds().bottomLeft()))
+            statusMorph.align(
+              statusMorph.bounds().topLeft(),
+              this.worldPoint(this.innerBounds().bottomLeft()))
         } else {
             statusMorph.centerAt(this.worldPoint(this.innerBounds().center()));
         };
-        (function() { statusMorph.remove() }).delay(delay || 4);
+        (function() { statusMorph.remove(); }).delay(delay || 4);
     }
 },
 'tab handling', {
@@ -2938,6 +2953,7 @@ Object.subclass('lively.morphic.TextEmphasis',
                     node.style.textDecoration = 'none';
                     node.style.color = 'inherit';
                     LivelyNS.removeAttribute(node, 'doit');
+                    lively.$(node).removeClass("doit");
                     delete this.doit;
                     return;
                 }
@@ -2956,6 +2972,7 @@ Object.subclass('lively.morphic.TextEmphasis',
                 node.style.cursor = 'pointer';
                 node.style.textDecoration = 'underline';
                 node.style.color = 'darkgreen';
+                lively.$(node).addClass("doit");
                 LivelyNS.setAttribute(node, 'doit', doit.code);
             }
         },

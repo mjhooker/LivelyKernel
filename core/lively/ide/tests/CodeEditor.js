@@ -294,6 +294,25 @@ lively.ide.tests.CodeEditor.Base.subclass('lively.ide.tests.CodeEditor.Commands'
         this.done();
     },
 
+    testPrintItAsComment: function() {
+        var e = this.editor,
+            Range = ace.require("ace/range").Range;
+        e.setPrintItAsComment(true);
+        e.focus();
+        // 1. single line
+        e.textString = "23";
+        e.aceEditor.execCommand('printit');
+        this.assertHasText(e, "23 // => 23");
+        this.assertEquals(e.getTextRange(), " // => 23");
+
+        // 2. multiline
+        e.textString = "var testPrintItAsComment_var = {x: 23, y: 24}; testPrintItAsComment_var";
+        e.aceEditor.execCommand('printit');
+        this.assertHasText(e, "var testPrintItAsComment_var = {x: 23, y: 24}; testPrintItAsComment_var // => {\n//   x: 23,\n//   y: 24\n// }");
+        this.assertEquals(e.getTextRange(), " // => {\n//   x: 23,\n//   y: 24\n// }");
+        this.done();
+    },
+
     testFitTextToColumn: function() {
         var test = this, e = this.editor,
             testData = [{
@@ -345,6 +364,19 @@ lively.ide.tests.CodeEditor.Base.subclass('lively.ide.tests.CodeEditor.Commands'
         e.textString = Strings.format("%s = 42;", varName);
         e.aceEditor.execCommand('doit');
         this.assertEquals(42, Global[varName], 'eval not successful');
+        this.done();
+    },
+
+    testModifyCommand: function() {
+        var e = this.editor, called = 0;
+        e.textString = "foo\nbar\nbaz\n";
+        e.aceEditor.execCommand('golinedown');
+        this.assertEqualState({row: 1, column: 0}, e.getCursorPositionAce());
+        e.modifyCommand('golinedown', {exec: function (ed,args) { called++ }})
+        e.aceEditor.execCommand('golinedown');
+        lively.ide.ace.require("ace/lib/keys").simulateKey(e.aceEditor, "Down")
+        this.assertEquals(2, called, "callcount")
+        this.assertEqualState({row: 1, column: 0}, e.getCursorPositionAce());
         this.done();
     }
 
@@ -422,6 +454,30 @@ lively.ide.tests.CodeEditor.Base.subclass('lively.ide.tests.CodeEditor.Selection
         marker.restoreText();
         this.assertEquals('1+2', marker.getTextString(), 'marker restore');
         this.done();
+    },
+
+    testCycleThroughMultiSelctionRanges: function() {
+        var e = this.editor;
+        e.textString = 'foo\nfoo\nfoo';
+        e.setSelectionRange(0,3);
+        e.multiSelectNext();
+        e.multiSelectNext();
+        this.assertEquals(
+          "Range: [0/0] -> [0/3],Range: [1/0] -> [1/3],Range: [2/0] -> [2/3]",
+          e.getSelection().getAllRanges().toString());
+        this.assertEquals("Range: [2/0] -> [2/3]", e.getSelection().getRange().toString());
+
+        e.multiSelectJump("prev");
+        e.multiSelectJump("prev");
+        this.assertEquals("Range: [0/0] -> [0/3]", e.getSelection().getRange().toString());
+        
+        e.multiSelectJump("next");
+        this.assertEquals("Range: [1/0] -> [1/3]", e.getSelection().getRange().toString());
+
+        this.assertEquals(
+          "Range: [0/0] -> [0/3],Range: [1/0] -> [1/3],Range: [2/0] -> [2/3]",
+          e.getSelection().getAllRanges().toString());
+        this.done();
     }
 
 });
@@ -436,6 +492,67 @@ lively.ide.tests.CodeEditor.Base.subclass('lively.ide.tests.CodeEditor.JSAST',
             this.assertEquals('Program', e.aceEditor.session.$ast.type);
             this.done();
         }, 400);
+    },
+
+    testAutoEvalPrintItComments: function() {
+        var e = this.editor, text;
+        e.setAutoEvalPrintItComments(true);
+        e.textString = "1 + 2";
+        this.delay(function() {
+          this.assertEquals("1 + 2", e.textString);
+          e.textString = "1 + 2 // => 45";
+          this.delay(function() {
+              this.assertEquals("1 + 2 // => 3", e.textString);
+              this.done();
+          }, 300);
+        }, 300);
+    },
+
+    testAddNextRefOrDeclToSelection: function() {
+        var src = Functions.extractBody(function() {
+          var x = 3, yyy = 4;
+          var z = function() { yyy + yyy + (function(yyy) { yyy+1 })(); }
+        });
+
+        var e = this.editor, text;
+        e.textString = src;
+        e.setSelectionRange(11, 14);
+        e.aceEditor.execCommand('selectSymbolReferenceOrDeclaration', {args: "all"});
+        this.assertEquals(
+          "Range: [0/11] -> [0/14],Range: [1/21] -> [1/24],Range: [1/27] -> [1/30]",
+          String(e.getSelection().getAllRanges()))
+
+        e.clearSelection();
+        e.setSelectionRange(11, 14);
+        e.aceEditor.execCommand('selectSymbolReferenceOrDeclaration', {args: "next"});
+        this.assertEquals(
+          "Range: [0/11] -> [0/14],Range: [1/21] -> [1/24]",
+          String(e.getSelection().getAllRanges()))
+
+        e.clearSelection();
+        e.setSelectionRange(47, 50);
+        e.aceEditor.execCommand('selectSymbolReferenceOrDeclaration', {args: "prev"});
+        this.assertEquals(
+          "Range: [1/21] -> [1/24],Range: [1/27] -> [1/30]",
+          String(e.getSelection().getAllRanges()))
+
+        this.done();
+    },
+
+    testSelectDefinition: function() {
+        var src = Functions.extractBody(function() {
+          var x = 3, yyy = 4;
+          var z = function() { yyy + yyy + (function(yyy) { yyy+1 })(); }
+        });
+
+        var e = this.editor, text;
+        e.textString = src;
+        e.setSelectionRange(47, 47); // descond "yyy of + op
+        e.aceEditor.execCommand('selectDefinition');
+
+        var expectedRanges = [{start:{column:11,row:0},end:{column:14,row:0}}]; // var yyy
+        this.assertEqualState(expectedRanges, e.getSelection().getAllRanges())
+        this.done();
     }
 
 });

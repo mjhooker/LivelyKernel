@@ -51,7 +51,9 @@ var options = args.options([
                                + '"foo/bar.js" to start subserver bar. Aliasing supported via '
                                + '"baz:foo/bar.js" to start subserver bar.js as baz.'],
     [      '--use-manifest', 'Enables the creation of manifest file for application cache.'],
-    [      '--no-partsbin-check', 'Don\'t check for PartsBin existance and update the PartsBin.']],
+    [      '--no-partsbin-check', 'Don\'t check for PartsBin existance and update the PartsBin.'],
+    [      '--auth-config FILE', '(Optional) Configure an authorization and authentication to enable a login '
+                               + 'system and restrict access.']],
     {},
     "Starts a Lively Kernel server.");
 
@@ -68,6 +70,13 @@ if (!options.lkDir && env.WORKSPACE_LK_EXISTS) {
 if (!options.lkDir) {
     console.log("Cannot find the Lively core repository. "
                + "Please start the server with --lk-dir PATH/TO/LK-REPO");
+}
+
+var authConfig;
+if (options.defined('authConfig')) {
+    // contents of authConfig should be JSON, we just pass the
+    // unparsed JSON string to life_star
+    authConfig = String(fs.readFileSync(options.authConfig));
 }
 
 var dbConfig;
@@ -183,6 +192,7 @@ function startServer(callback) {
         port:                port,
         fsNode:              options.lkDir, // LivelyKernel directory to serve from
         dbConf:              dbConfig, // lively-davfs
+        authConf:            authConfig, // life_star-auth
         enableTesting:       env.LIFE_STAR_TESTING  === 'testing',
         logLevel:            options.logLevel || env.LIFE_STAR_LOG_LEVEL, // log level for logger: error, warning, info, debug
         behindProxy:         options.defined('behindProxy'),
@@ -198,6 +208,13 @@ function startServer(callback) {
                 process.pid, options.defined('enableSsl') ? 'https' : 'http', host, port);
     console.log("Serving files from " + options.lkDir);
     callback(null, process);
+}
+
+function loadNodejsLively(thenDo) {
+    require("lively-loader").withLivelyNamespaceDo(function(err, lively) {
+        if (lively) global.lively = lively;
+        thenDo(err);
+    });
 }
 
 // -=-=-=-=-=-=-=-=-=-=-=-=-
@@ -224,7 +241,8 @@ if (options.defined('info')) {
     checkNPMPackages(function(err) {
         if (err) { console.error('error on server start: %s', err); return; }
         require("async").waterfall([
-    	    downloadPartsBin,
+    	      downloadPartsBin,
+    	      loadNodejsLively,
             getServerInfo,
             killOldServer, // Ensure that only one server for the given port is running
             startServer,

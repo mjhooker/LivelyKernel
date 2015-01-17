@@ -1,4 +1,4 @@
-module('lively.ide.CodeEditor').requires('lively.morphic', 'lively.ide.codeeditor.ace', 'lively.ide.codeeditor.DocumentChange', 'lively.ide.codeeditor.JS', 'lively.ide.codeeditor.Keyboard', 'lively.ide.codeeditor.EvalMarker', 'lively.ide.codeeditor.Snippets', 'lively.ide.codeeditor.Modes', 'lively.lang.VM').toRun(function() {
+module('lively.ide.CodeEditor').requires('lively.morphic', 'lively.ide.codeeditor.ace', 'lively.ide.codeeditor.DocumentChange', 'lively.ide.codeeditor.Commands', 'lively.ide.codeeditor.Keyboard', 'lively.ide.codeeditor.EvalMarker', 'lively.ide.codeeditor.Snippets', 'lively.ide.codeeditor.Modes', 'lively.lang.VM').toRun(function() {
 
 lively.morphic.Shapes.External.subclass("lively.morphic.CodeEditorShape",
 'settings', {
@@ -68,12 +68,13 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         showActiveLine: Config.get('aceDefaultShowActiveLine'),
         showIndents: Config.get('aceDefaultShowIndents'),
         softTabs: Config.get('useSoftTabs'),
+        elasticTabs: Config.get('useElasticTabs'),
         tabSize: Config.get('defaultTabSize'),
         autocompletion: Config.get('aceDefaultEnableAutocompletion'),
         showWarnings: Config.get('aceDefaultShowWarnings'),
         showErrors: Config.get('aceDefaultShowErrors')
     },
-    doNotSerialize: ['_aceInitialized', 'aceEditor', 'aceEditorAfterSetupCallbacks', 'savedTextString'],
+    doNotSerialize: ['_aceInitialized', 'aceEditor', 'aceEditorAfterSetupCallbacks', 'savedTextString', 'storedString', '_statusMorph'],
     _aceInitialized: false,
     evalEnabled: false,
     isAceEditor: true,
@@ -132,18 +133,17 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
 
     onstore: function($super, persistentCopy) {
         $super(persistentCopy);
+        if (this.hasOwnProperty("storedTextString")) delete this.storedTextString;
         persistentCopy.storedTextString = this.textString;
     },
 
     onrestore: function($super) {
         $super();
-        if (!this.storedTextString) return;
+        if (!this.hasOwnProperty("storedTextString")) return;
         // wait for ace to be initialized before throwing away the stored string
         // this way we can still return it in textString getter in the meantime
-        this.withAceDo(function(ed) {
-            this.textString = this.storedTextString;
-            delete this.storedTextString;
-        });
+        this.textString = this.storedTextString || "";
+        delete this.storedTextString;
     }
 },
 'accessing', {
@@ -178,6 +178,7 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         this.whenOpenedInWorld(function() { e.resize.bind(e,true).delay(0.1); });
 
         // 3) set modes / themes
+        lively.ide.codeeditor.Commands.attach(this);
         lively.ide.CodeEditor.KeyboardShortcuts.defaultInstance().attach(this);
         this.setTextMode(this.getTextMode() || "");
         this.setTheme(this.getTheme() || '');
@@ -188,7 +189,9 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         this.setShowInvisibles(this.getShowInvisibles());
         this.setShowIndents(this.getShowIndents());
         this.setSoftTabs(this.getSoftTabs());
-        this.setTabSize(this.getTabSize());
+        if (this.hasOwnProperty("_TabSize")) this.setTabSize(this.getTabSize());
+        else this.guessAndSetTabSize();
+        if (this.getElasticTabs()) this.setElasticTabs(true);
         this.setShowActiveLine(this.getShowActiveLine());
         this.setAutocompletionEnabled(this.getAutocompletionEnabled());
         this.setShowWarnings(this.getShowWarnings());
@@ -289,9 +292,16 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
             if (typeof cmd.bindKey === 'object' && !commands.platform) return;
             var keySpec = typeof cmd.bindKey === 'object' ? cmd.bindKey[commands.platform] : cmd.bindKey;
             keySpec.split('|').forEach(function(keys) {
-                var parsed = commands.parseKeys(keys),
+                // rk Nov 6, 2014: the current version of date changed the way
+                // keys are recorded in the commandKeyBinding. They now map
+                // directly to the key name instead of a hash/name pair
+                var cmdForKey = ckb[keys.toLowerCase()];
+                if (cmdForKey) ckb[keys.toLowerCase()] = cmd;
+                else {
+                    var parsed = commands.parseKeys(keys);
                     cmdForKey = ckb[parsed.hashId] && ckb[parsed.hashId][parsed.key];
-                if (cmdForKey) ckb[parsed.hashId][parsed.key] = cmd;
+                    if (cmdForKey) ckb[parsed.hashId][parsed.key] = cmd;
+                }
             });
         }
         this.withAceDo(function(ed) {
@@ -426,7 +436,14 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
 
     setTheme: function(themeName) {
         this.withAceDo(function(ed) {
-            ed.setTheme(lively.ide.ace.moduleNameForTheme(themeName));
+            var aceThemeName = lively.ide.ace.moduleNameForTheme(themeName);
+            if (!aceThemeName) {
+                console.log("Loading ace theme %s...", themeName);
+                lively.ide.ace.config.loadModule(["theme", "ace/theme/" + themeName], function() {
+                    console.log("Ace theme %s loaded", themeName);
+                    ed.setTheme(lively.ide.ace.moduleNameForTheme(themeName));
+                });
+            } else { ed.setTheme(aceThemeName); }
         });
         return this._Theme = themeName;
     },
@@ -444,7 +461,18 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         var parts = modeString.split(':'),
             modeName = parts[0], astType = parts[1] || null;
         this.withAceDo(function(ed) {
-            ed.session.setMode(lively.ide.ace.moduleNameForTextMode(modeName));
+            var aceModeName = lively.ide.ace.moduleNameForTextMode(modeName);
+            if (!aceModeName) {
+                console.log("Loading ace mode %s...", modeString);
+                lively.ide.ace.config.loadModule(["mode", "ace/mode/" + modeString], function() {
+                    console.log("Ace mode %s loaded", modeString);
+                    ed.session.setMode(lively.ide.ace.moduleNameForTextMode(modeName));
+                })
+            } else {
+              lively.ide.codeeditor.Modes.ensureModeExtensionIsLoaded("ace/mode/" + modeString, function() {
+                ed.session.setMode(aceModeName);
+              });
+            }
             ed.session.$astType = astType;
         });
         return this._TextMode = modeString;
@@ -504,13 +532,22 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
             return ed.session.getWordRange(p.row, p.column);
         });
     },
+
     tokenAt: function(pos/*ace pos or null*/) {
         // that.tokenAt()
         return this.withAceDo(function(ed) {
             pos = pos || ed.getCursorPosition();
             return ed.session.getTokenAt(pos.row, pos.column); });
     },
+
     tokenAtPoint: function() { return this.tokenAt(null); },
+
+    tokenAfterPoint: function(pos) {
+        pos = pos || this.getCursorPositionAce();
+        var tokenPos = {column: pos.column+1, row: pos.row};
+        return this.tokenAt(tokenPos);
+    },
+
     tokensInRange: function(range/*range or null for sel range*/) {
         // if no range given current selection range is used.
         // takes the range and returns all tokens in that range
@@ -631,21 +668,22 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
 
 },
 'event handling', {
+
     onMouseDownEntry: function($super, evt) {
-        // ace installs a mouseup event handler on the document level and
+        // ace installs a pointerup event handler on the document level and
         // stops the event so it never reaches our Morphic event handlers. To
-        // still dispatch the event properly we install an additional mouseup
+        // still dispatch the event properly we install an additional pointerup
         // handler that is removed immediately thereafter
         var self = this;
         function upHandler(evt) {
-            document.removeEventListener("mouseup", upHandler, true);
+            document.removeEventListener("pointerup", upHandler, true);
             lively.morphic.EventHandler.prototype.patchEvent(evt);
-            evt.world.clickedOnMorph = evt.getTargetMorph();
+            evt.hand.clickedOnMorph = self;
             [self].concat(self.ownerChain()).reverse().forEach(function(ea) {
                 ea.onMouseUpEntry(evt); });
         }
-        document.addEventListener("mouseup", upHandler, true);
-        evt.world.clickedOnMorph = this;
+        document.addEventListener("pointerup", upHandler, true);
+        evt.hand.clickedOnMorph = this;
         return $super(evt);
     },
 
@@ -693,14 +731,100 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
     },
 
     doKeyCopy: Functions.Null,
-    doKeyPaste: Functions.Null
+    doKeyPaste: Functions.Null,
+
+    commandKeyName: function() {
+      return !!UserAgent.isMacOS ? "command" : "ctrl";
+    },
+
+    showEffectiveKeybindings: function() {
+      return this.withAceDo(function(ed) {
+        var all = ace.ext.keys.allEditorCommands(ed);
+        var cmdNames = Object.keys(all).sort();
+        var spec = cmdNames.reduce(function(spec, cmdName) {
+          var boundCommands = all[cmdName];
+          var keys = boundCommands
+            .map(function(ea) { return ea.key.include("input") ? null : ea.key; })
+            .uniq().compact().join("|");
+          if (!keys.length) return spec;
+          spec[cmdName] = keys
+          return spec;
+        }, {});
+        var winEd = $world.addCodeEditor({
+          title: "bound keys",
+          content: JSON.stringify(spec, null, 2),
+          textMode: "json"
+        });
+        winEd.setInputAllowed(false);
+        winEd.getWindow().comeForward();
+        return winEd;
+        // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+        // var colWidth = cmdNames.reduce(function(colWidth, cmdName) {
+        //   return Math.max(cmdName.length, colWidth); }, 0);
+        // var spec = cmdNames.reduce(function(spec, cmdName) {
+        //   var boundCommands = all[cmdName];
+        //   var keys = boundCommands
+        //     .map(function(ea) { return ea.key.include("input") ? null : ea.key; })
+        //     .uniq().compact().join("|");
+        //   var string = lively.lang.string.pad(cmdName, colWidth+1-cmdName.length, false) + keys;
+        //   return spec.concat([
+        //       [string, {type: "text", boundCommands: boundCommands}],
+        //       ["\n"]])
+        // }, [])
+        //
+        // var winEd = $world.addCodeEditor({
+        //   title: "bound keys",
+        //   content: "",
+        //   textMode: "attributedtext"
+        // });
+        // winEd.setInputAllowed(false);
+        // winEd.withAceDo(function(ed) { ed.session.getMode().set(ed, spec); })
+        // winEd.getWindow().comeForward();
+        // return winEd;
+      });
+    },
+
+    customizeKeybindingsInteractively: function() {
+      var existing = ace.ext.keys.getKeyCustomizationLayer("user-key-bindings") || {commandKeyBinding: {}};
+      var editor = $world.addCodeEditor({
+        title: "user key customizations",
+        content: (JSON.stringify(existing, null, 2)),
+        textMode: "json",
+      });
+      
+      editor.setStatusMessage("Press " + this.commandKeyName() + "-s to save\n"
+                            + "customizations should have the form\n{\"command-name\": \"key\"}\n", null, 10);
+
+      editor.addScript(function doSave() {
+        var key = "user-key-bindings";
+        var s = this.textString;
+        if (!s.length) {
+          ace.ext.keys.removeKeyCustomizationLayer(key, cust);
+          lively.LocalStorage.remove(key);
+          this.setStatusMessage("User key customization removed");
+        } else {
+          try {
+            var cust = JSON.parse(this.textString);
+            if (!cust.priority) cust.priority = 100;
+            ace.ext.keys.addKeyCustomizationLayer(key, cust);
+            lively.LocalStorage.set(key, JSON.stringify(cust));
+            this.setStatusMessage("user key customization saved");
+          } catch (e) {
+            this.setStatusMessage("Error setting key customization:\n"+e, Color.red);
+          }
+        }
+      });
+    }
 },
 'text morph eval interface', {
 
-    tryBoundEval: function(string) {
+    tryBoundEval: function(string, options) {
         // FIXME: different behaviour in CodeEditor, TextMorph, ObjectEditor
+        options = options || {};
+        if (!options.sourceURL) options.sourceURL = this.sourceNameForEval();
         try {
-            return this.boundEval(string);
+            return this.boundEval(string, options);
         } catch(e) {
             // mr 2014-04-16: e.unwindException has to be used because e is unwrapped when rewritten
             if (lively.Config.get('loadRewrittenCode') && e.unwindException && e.unwindException.isUnwindException) {
@@ -717,7 +841,7 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         }
     },
 
-    boundEval: function (__evalStatement) {
+    boundEval: function (__evalStatement, __evalOptions) {
         // Evaluate the string argument in a context in which "this" is
         // determined by the reuslt of #getDoitContext
         var ctx = this.getDoitContext() || this,
@@ -755,7 +879,8 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
                     context: ctx,
                     topLevelVarRecorder: Global,
                     varRecorderName: 'Global',
-                    blacklist: ['Global']
+                    dontTransform: lively.ast.query.knownGlobals,
+                    sourceURL: __evalOptions ? __evalOptions.sourceURL : undefined
                 }, function(err, _result) { result = err || _result; });
                 return result;
             } catch(e) {
@@ -765,9 +890,9 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         }
 
         try {
-            var result = !lively.Config.get('loadRewrittenCode') ? interactiveEval.call(ctx) : interactiveDebugEval(ctx);
-            if (Config.changesetsExperiment && $world.getUserName() &&
-        localStorage.getItem("LivelyChangesets:" +  $world.getUserName() + ":" + location.pathname) !== "off")
+            var result = !lively.Config.get('loadRewrittenCode') ? interactiveEval.call(ctx) : interactiveDebugEval(ctx),
+                itemName = "Changesets:" +  $world.getUserName() + ":" + location.pathname;
+            if (Config.changesetsExperiment && $world.getUserName() && lively.LocalStorage.get(itemName) !== "off")
                 lively.ChangeSet.logDoit(str, ctx.lvContextPath());
             return result;
         } catch(e) {
@@ -778,9 +903,87 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         }
     },
 
+    sourceNameForEval: function() {
+      // used as //# sourceURL, for debugging
+      return "doit-" + Date.now();
+    },
+
+    doAutoEvalPrintItComments: function doAutoEvalPrintItComments() {
+      // 1. Test if there are errors:
+      var verbose = lively.Config.get('verboseLogging');
+      lively.Config.set('verboseLogging', false);
+      var success = this.boundEval(this.textString);
+      lively.Config.set('verboseLogging', verbose);
+      if (success instanceof Error) return;
+
+      var ed = this;
+      var doitMarker = "// =>", match;
+      var printDepth = 1;
+      var src = ed.textString;
+      var ast = lively.ast.acorn.parse(src);
+
+      // 2. Find the doit markers in comments and for each comment get a range
+      var commentRanges = Strings
+        .reMatches(src, new RegExp(doitMarker.replace(" ", "\\s*"), 'g'))
+        .map(findCommmentRange.bind(null,ed))
+        .reverse();
+
+      // 3. Eval the code in front of the comments
+      // and the print results as comment
+      var reEvaled = commentRanges
+        .map(evaluateCodeBeforeRange)
+        .map(commentify);
+
+      // 4. replace old comments
+      commentRanges.forEach(function(range, i) {
+        // ed.aceEditor.selection.addRange(range);
+        var repl = reEvaled[i];
+        var orig = ed.getTextRange(range);
+        if (orig.slice(-1) === "\n" && repl.slice(-1) !== "\n") repl += '\n';
+        ed.replace(range, repl) });
+
+
+      // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+      // helper
+
+      function findCommmentRange(ed, match) {
+        var loc = ed.indexToPosition(match.start+1),
+            start = loc, row = loc.row, commentTokens = [ed.getSession().getTokenAt(loc.row, loc.column)];
+        var n = 0;
+        while(true) {
+            n++;
+            if (n > 10000) throw new Error("findCommmentRange endless loop at " + row);
+          var tokens = ed.getSession().getTokens(row+1);
+          if (!tokens || !tokens.length || !tokens.every(function(t) { return t.type === 'comment'})) break;
+          commentTokens.pushAll(tokens); row++;
+        }
+        var tok = commentTokens.last();
+        return ed.createRange(
+            {row: start.row, column: start.column-1},
+            {row: start.row === row ? row : row+1,
+             column: tok.start + tok.value.length});
+      }
+
+      function commentify(string) {
+        return string ?
+          Strings.lines(string)
+            .map(function(line) { return "// " + line; })
+            .join("\n").replace("// ", doitMarker + " ") : "// => uha, sth went wrong"
+      }
+
+      function evaluateCodeBeforeRange(range) {
+        var found = Global.acorn.walk.findNodeBefore(ast, ed.positionToIndex(range.start))
+        if (!found || !found.node) return null;
+        var code = src.slice(found.node.start, found.node.end);
+        return Objects.inspect(ed.tryBoundEval(code), {maxDepth: printDepth});
+      }
+
+    },
+
     evalSelection: function(printIt) {
         var str = this.getSelectionOrLineString(),
-            result = this.tryBoundEval(str);
+            range = this.getSelectionRange(),
+            result = this.tryBoundEval(str, {range: {start: {index: range[0]}, end: {index: range[1]}}});
         if (printIt) this.insertAtCursor(String(result), true);
         return result;
     },
@@ -794,34 +997,52 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         });
     },
 
-    printObject: function(editor, obj, suppressSelection) {
+    printObject: function(editor, obj, suppressSelection, asComment) {
         // inserts a stringified representation of object into editor
         // the current selection is cleared and the stringified representation
         // is inserted at the end (in terms of document position) of the current
         // selection (or at the cursor pos if no sel is active)
+        var self = this;
+        if (editor) insert(editor); else this.withAceDo(insert);
+
+        // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
         function printError(err) {
             var string = String(err.stack || err);
             return string.include(err) ? string : err + '\n' + string;
         }
+
         function insert(ed) {
             self.collapseSelection('end');
             var string;
             try {
                 string = obj instanceof Error ? printError(obj) : String(obj);
             } catch (e) { string = printError(e); }
+            if (asComment) string = commentify(string, ed.session.getMode().lineCommentStart);
             ed.onPaste(string);
             if (!suppressSelection) self.extendSelectionRange(-string.length);
         }
-        var self = this;
-        if (editor) insert(editor); else this.withAceDo(insert);
+
+        function commentify(string, lineCommentStart) {
+          return " " + lineCommentStart + Strings.lines(string)
+            .join('\n' + lineCommentStart + " ")
+        }
     },
 
     doit: function(printResult, editor) {
         var text = this.getSelectionMaybeInComment(),
-            result = this.tryBoundEval(text);
-        if (printResult) { this.printObject(editor, result); return; }
+            range = this.getSelectionRange(),
+            result = this.tryBoundEval(text, {range: {start: {index: range[0]}, end: {index: range[1]}}});
+        if (printResult) {
+          if (this.getPrintItAsComment()) {
+            try { result = " => " + Objects.inspect(result, {maxDepth: 4});
+            } catch (e) { result = " => Error printing inspect view of " + result + ": " + e; }
+          }
+          this.printObject(editor, result, false, this.getPrintItAsComment());
+          return;
+        }
         if (result && result instanceof Error && lively.Config.get('showDoitErrorMessages') && this.world()) {
-            this.world().alert(String(result));
+            this.world().logError(result, "doit error");
         }
         var sel = this.getSelection();
         if (sel && sel.isEmpty()) sel.selectLine();
@@ -848,7 +1069,8 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
 
     doListProtocol: function() {
         lively.require("lively.ide.codeeditor.Completions").toRun(function() {
-            new lively.ide.codeeditor.Completions.ProtocolLister(this).evalSelectionAndOpenNarrower();
+            new lively.ide.codeeditor.Completions.ProtocolLister(this)
+              .evalSelectionAndOpenNarrower();
         }.bind(this));
     },
 
@@ -929,12 +1151,12 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         return this.withAceDo(function(ed) { return ed.selection });
     },
 
-    setSelectionRange: function(startIdx, endIdx) {
+    setSelectionRange: function(startIdx, endIdx, reverse) {
         this.withAceDo(function(aceEditor) {
             var doc = aceEditor.session.doc,
                 start = doc.indexToPosition(startIdx),
                 end = doc.indexToPosition(endIdx);
-            aceEditor.selection.setRange({start: start, end: end});
+            aceEditor.selection.setRange({start: start, end: end}, reverse);
         });
     },
 
@@ -949,9 +1171,11 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
     },
 
     getSelectionRange: function() {
+      return this.withAceDo(function(ed) {
         var range = this.getSelectionRangeAce(),
             doc = this.getDocument();
         return [doc.positionToIndex(range.start), doc.positionToIndex(range.end)];
+      }) || [0,0];
     },
 
     getSelectionRangeAce: function() {
@@ -1073,6 +1297,28 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         });
     },
 
+    multiSelectJump: function(dir) {
+        // When multiple ranges are active, one of them is the "current" that
+        // is returned by `this.aceEditor.getRange()` and that gets the cursor
+        // when the selections are deactivated. This method can be used to
+        // cycle back and forth between the current range.
+        this.withAceDo(function(ed) {
+          var sel = ed.selection,
+              ranges = sel.getAllRanges(),
+              range = sel.getRange(),
+              multiRange = ranges.detect(function(r) { return r.isEqual(range); }),
+              i = ranges.indexOf(multiRange),
+              nextI = dir === "next" ?
+                (i+1) % ranges.length :
+                i === 0 ? ranges.length-1 : i-1,
+              newRange = ranges[nextI];
+          ed.exitMultiSelectMode();
+          sel.setRange(newRange);
+          ranges.without(newRange).forEach(function(ea) { sel.addRange(ea, true); });
+          ed.centerSelection();
+        });
+    },
+
     collapseSelection: function(dir) {
         // dir = 'start' || 'end'
         var sel = this.getSelection(), range = sel.getRange();
@@ -1154,7 +1400,10 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
 
     set textString(string) {
         string = String(string);
-        if (!this.aceEditor) this.storedString = string;
+        if (!this.aceEditor) {
+          this.storedString = string;
+          this.withAceDo(function(ed) { delete this.storedString });
+        }
         this.withAceDo(function(ed) {
             ed.selection.clearSelection();
             var pos = ed.getCursorPosition(),
@@ -1216,7 +1465,7 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
     doSave: function() {
         this.savedTextString = this.textString;
         if (this.evalEnabled) {
-            this.tryBoundEval(this.savedTextString);
+            this.tryBoundEval(this.savedTextString, {range: {start: {index: 0}, end: {index: this.textString.length}}});
         }
     },
     clear: function() {
@@ -1318,10 +1567,21 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
             return ed.session.getUseSoftTabs(); });
     },
 
+    setElasticTabs: function(bool) {
+        if (bool) this.setSoftTabs(false);
+        this.withAceDo(function(ed) { ed.setOption("useElasticTabstops", bool); });
+        return this._ElasticTabs = bool;
+    },
+    getElasticTabs: function() {
+        return this.hasOwnProperty("_ElasticTabs") ? this._ElasticTabs : this.withAceDo(function(ed) {
+            return ed.getOption("useElasticTabstops"); });
+    },
+
     getTabSize: function() {
         return this.withAceDo(function(ed) { return ed.session.getTabSize(); });
     },
     setTabSize: function(tabSize) {
+        this._TabSize = tabSize;
         return this.withAceDo(function(ed) { return ed.session.setTabSize(tabSize); });
     },
     guessTabSize: function() {
@@ -1356,6 +1616,19 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         return this.hasOwnProperty("_ShowErrors") ? this._ShowErrors : true
     },
 
+    setPrintItAsComment: function(bool) { return this._PrintItAsComment = bool; },
+    getPrintItAsComment: function() {
+        return this.hasOwnProperty("_PrintItAsComment") ? this._PrintItAsComment : false;
+    },
+
+    setAutoEvalPrintItComments: function(bool) {
+      var func = bool ? lively.bindings.connect : lively.bindings.disconnect;
+      func(this, 'textChange', this, 'doAutoEvalPrintItComments');
+      return this._AutoEvalPrintItComments = bool; },
+    getAutoEvalPrintItComments: function() {
+        return this.hasOwnProperty("_AutoEvalPrintItComments") ? this._AutoEvalPrintItComments : false;
+    },
+
     getNewLineMode: function() {
         return this.withAceDo(function(ed) { return ed.session.getNewLineMode(); });
     },
@@ -1375,69 +1648,80 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
     }
 },
 'rendering', {
-    setClipMode: Functions.Null
+    setClipMode: Functions.Null,
+    
+    onOwnerChanged: function($super, newOwner) {
+      if (!newOwner && this._statusMorph) this._statusMorph.remove();
+      return $super(newOwner);
+    }
 },
 'morph menu', {
     codeEditorMenuItems: function() {
         var editor = this, items = [], self = this, world = this.world(),
-            range = this.getSelectionRangeAce();
-        // eval marker
-        var evalMarkerItems = ['eval marker', []];
-        items.push(evalMarkerItems);
-        if (!range.isEmpty()) {
-            var selectedText = this.getSelectionOrLineString();
-            var indexOfDot = selectedText.lastIndexOf('.')
-            if(indexOfDot + 1 !== selectedText.length) {
-                var firstChar = selectedText.charAt(indexOfDot + 1);
-                if(firstChar.toLowerCase() === firstChar && indexOfDot === -1) {
-                    var selectorItems = ['Selector...', []];
-                    items.push(selectorItems);
-                    selectorItems[1].push(['Implementors', function() {
-                        self.doBrowseImplementors(); }]);
-                    selectorItems[1].push(['Senders', function() {
-                        self.doBrowseSenders(); }]);
-                } else {
-                    if(firstChar.toUpperCase() === firstChar) {
-                        try {
-                            var potentialClass = this.boundEval(selectedText);
-                            if(potentialClass && potentialClass.isClass() && potentialClass.name() === selectedText.subString(indexOfDot + 1)) {
-                                var classItems = ['Class...', []];
-                                items.push(classItems);
-                                classItems[1].push(['Browse', function() {
-                                    self.browseClass(potentialClass); }]);
-                                classItems[1].push(['Browse Hierarchy', function() {
-                                    self.browseHierarchy(potentialClass); }]);
-                                classItems[1].push(['References', function() {
-                                    self.browseReferencesTo(potentialClass); }]);
-                            }
-                        } catch(e) {
-                        }
-//                        Global.classes(true);
-                    }
-                }
-            }
-            evalMarkerItems[1].push(['Mark expression', function() {
-                self.addEvalMarker(); }]);
+            range = this.getSelectionRangeAce(),
+            mode = this.getTextMode(),
+            isJs = mode.match(/javascript/);
+        
+        if (isJs) {
+          // eval marker
+          var evalMarkerItems = ['eval marker', []];
+          items.push(evalMarkerItems);
+          if (!range.isEmpty()) {
+              var selectedText = this.getSelectionOrLineString();
+              var indexOfDot = selectedText.lastIndexOf('.')
+              if(indexOfDot + 1 !== selectedText.length) {
+                  var firstChar = selectedText.charAt(indexOfDot + 1);
+                  if(firstChar.toLowerCase() === firstChar && indexOfDot === -1) {
+                      var selectorItems = ['Selector...', []];
+                      items.push(selectorItems);
+                      selectorItems[1].push(['Implementors', function() {
+                          self.doBrowseImplementors(); }]);
+                      selectorItems[1].push(['Senders', function() {
+                          self.doBrowseSenders(); }]);
+                  } else {
+                      if(firstChar.toUpperCase() === firstChar) {
+                          try {
+                              var potentialClass = this.boundEval(selectedText);
+                              if(potentialClass && potentialClass.isClass() && potentialClass.name() === selectedText.subString(indexOfDot + 1)) {
+                                  var classItems = ['Class...', []];
+                                  items.push(classItems);
+                                  classItems[1].push(['Browse', function() {
+                                      self.browseClass(potentialClass); }]);
+                                  classItems[1].push(['Browse Hierarchy', function() {
+                                      self.browseHierarchy(potentialClass); }]);
+                                  classItems[1].push(['References', function() {
+                                      self.browseReferencesTo(potentialClass); }]);
+                              }
+                          } catch(e) {
+                          }
+  //                        Global.classes(true);
+                      }
+                  }
+              }
+              evalMarkerItems[1].push(['Mark expression', function() {
+                  self.addEvalMarker(); }]);
+          }
+          evalMarkerItems[1].push(['Remove eval marker', function() {
+              self.removeEvalMarker(); }]);
+  
+          var marker = lively.morphic.CodeEditorEvalMarker.currentMarker;
+          if (marker) {
+              if (marker.doesContinousEval()) {
+                  evalMarkerItems[1].push(['Disable eval interval', function() {
+                      marker.stopContinousEval();
+                  }]);
+              } else {
+                  evalMarkerItems[1].push(['Set eval interval', function() {
+                      world.prompt('Please enter the interval time in milliseconds', function(input) {
+                          input = Number(input);
+                          marker.startContinousEval(input);
+                          self.evalMarkerDelay = input || null;
+                      }, '200');
+                  }]);
+              }
+          }
         }
-        evalMarkerItems[1].push(['Remove eval marker', function() {
-            self.removeEvalMarker(); }]);
 
-        var marker = lively.morphic.CodeEditorEvalMarker.currentMarker;
-        if (marker) {
-            if (marker.doesContinousEval()) {
-                evalMarkerItems[1].push(['Disable eval interval', function() {
-                    marker.stopContinousEval();
-                }]);
-            } else {
-                evalMarkerItems[1].push(['Set eval interval', function() {
-                    world.prompt('Please enter the interval time in milliseconds', function(input) {
-                        input = Number(input);
-                        marker.startContinousEval(input);
-                        self.evalMarkerDelay = input || null;
-                    }, '200');
-                }]);
-            }
-        }
         // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
         // themes
         var currentTheme = this.getTheme(),
@@ -1456,9 +1740,6 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
                                                  mode);
                 return [modeString, function(evt) { editor.setTextMode(mode); }]; });
 
-        items.push(["themes", themeItems]);
-        items.push(["modes", modeItems]);
-
         // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
         function boolItem(itemSpec, items) {
             var enabled = editor["get"+itemSpec.name]();
@@ -1467,6 +1748,10 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
             items.push(item);
         }
         var settingsItems = [];
+        settingsItems.push(['Show effective keybindings', function() { self.showEffectiveKeybindings(); }]);
+        settingsItems.push(['Customize keybindings', function() { self.customizeKeybindingsInteractively(); }]);
+        settingsItems.push(["themes", themeItems]);
+        settingsItems.push(["modes", modeItems]);
         boolItem({name: "ShowGutter", menuString: "show line numbers"}, settingsItems);
         boolItem({name: "ShowInvisibles", menuString: "show whitespace"}, settingsItems);
         boolItem({name: "ShowPrintMargin", menuString: "show print margin"}, settingsItems);
@@ -1483,6 +1768,10 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         boolItem({name: "ShowWarnings", menuString: "show warnings"}, settingsItems);
         boolItem({name: "ShowErrors", menuString: "show Errors"}, settingsItems);
         boolItem({name: "AutocompletionEnabled", menuString: "use Autocompletion"}, settingsItems);
+        if (isJs) {
+          boolItem({name: "PrintItAsComment", menuString: "printIt as comment"}, settingsItems);
+          boolItem({name: "AutoEvalPrintItComments", menuString: "re-evaluate printIt comments"}, settingsItems);
+        }
         items.push(['settings', settingsItems]);
 
         var mac = UserAgent.isMacOS;
@@ -1499,11 +1788,14 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
                 if (options.focusAfter) editor.focus();
             }]);
         }
+        
         cmdBinding({name: 'save', cmdName: 'doSave', shortcut: {win: 'CTRL-s', mac: 'CMD-s'}});
-        cmdBinding({name: 'property completion', cmdName: 'list protocol', shortcut: {win: 'CTRL-P', mac: 'CMD-P'}});
-        cmdBinding({name: 'inspect', cmdName: 'doInspect', shortcut: {win: 'CTRL-I', mac: 'CMD-I'}});
-        cmdBinding({name: 'printit', shortcut: {win: 'CTRL-p', mac: 'CMD-p'}});
-        cmdBinding({name: 'doit', shortcut: {win: 'CTRL-d', mac: 'CMD-d'}});
+        if (isJs) {
+          cmdBinding({name: 'property completion', cmdName: 'list protocol', shortcut: {win: 'CTRL-P', mac: 'CMD-P'}});
+          cmdBinding({name: 'inspect', cmdName: 'doInspect', shortcut: {win: 'CTRL-I', mac: 'CMD-I'}});
+          cmdBinding({name: 'printit', shortcut: {win: 'CTRL-p', mac: 'CMD-p'}});
+          cmdBinding({name: 'doit', shortcut: {win: 'CTRL-d', mac: 'CMD-d'}});
+        }
 
         // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
         // modes
@@ -1528,37 +1820,62 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
 },
 'messaging', {
     setStatusMessage: function (msg, color, delay) {
-        console.log("%s status: %s", this, msg)
         var world = this.world();
         if (!world) return;
-        var sm = this._statusMorph;
+        var self = this, sm = this._statusMorph,
+            ext = this.getExtent();
+
+        // create if not there yet. Note that every editor gets its own message
+        // morph but that the message morph will be a submorph of world
         if (!sm) {
-            this._statusMorph = sm = new lively.morphic.Text(this.getExtent().withY(80).extentAsRectangle());
+            this._statusMorph = sm = new lively.morphic.Text(ext.withY(80).extentAsRectangle());
             sm.applyStyle({
                 fontFamily: 'Monaco,monospace',
                 borderWidth: 0, borderRadius: 6,
-                fill: Color.gray.lighter(),
-                fontSize: this.getFontSize() + 1,
-                fixedWidth: true, fixedHeight: false
+                fontSize: this.getFontSize()-2,
+                inputAllowed: false,
+                fixedWidth: true, fixedHeight: false,
             });
             sm.isEpiMorph = true;
-            this._sm = sm;
         }
-        sm.textString = msg;
-        sm.ignoreEvents();
+
+        // setting 'da message
+        if (Array.isArray(msg)) sm.setRichTextMarkup(msg);
+        else sm.textString = msg;
+        sm.lastUpdated = Date.now();
         world.addMorph(sm);
+        var color = color || Color.white;
+        var fill = (color === Color.green || color === Color.red) ? Color.white : Color.black.lighter()
         sm.applyStyle({
-            textColor: color || Color.black,
+            textColor: color, fill: fill,
             position: this.worldPoint(this.innerBounds().bottomLeft()),
         });
+
+        // aligning
         sm.fit();
         (function() {
-            var world = sm.world(), visibleBounds = world.visibleBounds(),
-                overlapY = sm.bounds().bottom() - visibleBounds.bottom();
-            if (overlapY > 0) sm.moveBy(pt(0, -overlapY));
+          var visibleBounds = world.visibleBounds(),
+              overlapY = sm.bounds().bottom() - visibleBounds.bottom();
+          if (overlapY > 0) sm.moveBy(pt(0, -overlapY));
+          sm.setExtent(sm.getExtent().withX(ext.x));
         }).delay(0);
-        if (sm._removeTimer) clearTimeout(sm._removeTimer);
-        sm._removeTimer = setTimeout(sm.remove.bind(sm), 1000*(delay||4))
+
+        // either remove via timeout or when curs/selection changes occur. Note
+        // that via onOwnerChanged the statusMorph also is removed when the
+        // editors owner is null
+        (function() {
+          function removeStatusMessage() {
+            sm.remove();
+            self.withAceDo(function(ed) { ed.off("changeSelection", removeStatusMessage); })
+          }
+        
+          if (sm._removeTimer) clearTimeout(sm._removeTimer);
+          if (typeof delay === "number") {
+            sm._removeTimer = setTimeout(removeStatusMessage, 1000*delay)
+          } else {
+            self.withAceDo(function(ed) { ed.once("changeSelection", removeStatusMessage); });
+          }
+        }).delay(0);
     },
     hideStatusMessage: function () {
         if (this._statusMorph && this._statusMorph.owner) this._statusMorph.remove();
@@ -1633,11 +1950,23 @@ lively.morphic.CodeEditor.addMethods(
 });
 
 Object.extend(lively.ide, {
+
     newCodeEditor: function (initialBounds, defaultText) {
         var bounds = initialBounds.extent().extentAsRectangle(),
             text = new lively.morphic.CodeEditor(bounds, defaultText || '');
         text.accessibleInInactiveWindow = true;
         return text;
+    },
+
+    allCodeEditors: function() {
+      // returns all codeeditor morphs in the world, also those which are
+      // inside collapsed windows
+      var eds = $world.withAllSubmorphsSelect(function(ea) { return ea.isCodeEditor; }),
+          hiddenEds = $world.withAllSubmorphsSelect(function(ea) { return ea.isWindow && ea.isCollapsed(); })
+            .pluck('targetMorph')
+            .invoke('withAllSubmorphsSelect', function(ea) { return ea.isCodeEditor; })
+            .flatten();
+      return eds.concat(hiddenEds);
     }
 });
 

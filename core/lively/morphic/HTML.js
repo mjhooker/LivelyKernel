@@ -43,9 +43,9 @@ Trait('LinearGradientCSSTrait',
         str += ')';
         return str;
     },
-    toCSSStringUnknown: function() {
-        console.warn('Trying to detect how CSS gradients are rendered but wasn\'t able to recognize browser');
-        return '';
+    toCSSStringUnknown: function(bounds) {
+        console.warn('Trying to detect how CSS gradients are rendered, assuming standards compliant browser');
+        return this.toCSSStringFirefoxAndOpera(bounds, "");
     }
 })
 .applyTo(lively.morphic.LinearGradient, {
@@ -60,7 +60,7 @@ Trait('LinearGradientCSSTrait',
 Trait('RadialGradientCSSTrait',
 'HTML rendering', {
     toCSSStringFirefoxAndOpera: function(bounds, cssPrefix) {
-        var str = Strings.format('-moz-radial-gradient(50% 50%, circle cover');
+        var str = Strings.format('%sradial-gradient(50% 50%, circle cover');
         for (var i = 0; i < this.stops.length; i++)
             str += ', ' + this.stops[i].color + ' ' + (this.stops[i].offset*100) + '%'
         str += ')';
@@ -96,9 +96,9 @@ Trait('RadialGradientCSSTrait',
         str += ')';
         return str;
     },
-    toCSSStringUnknown: function() {
-        console.warn('Trying to detect how CSS gradients are rendered but wasn\'t able to recognize browser');
-        return '';
+    toCSSStringUnknown: function(bounds) {
+        console.warn('Trying to detect how CSS gradients are rendered, assuming standards compliant browser');
+        return this.toCSSStringFirefoxAndOpera(bounds, "");
     },
 })
 .applyTo(lively.morphic.RadialGradient, {
@@ -341,7 +341,10 @@ lively.morphic.Morph.addMethods(
         return ctx.morphNode ? ctx.morphNode.dispatchEvent(evt) : null;
     },
     setPointerEventsHTML: function(ctx, value) {
-        if (ctx.morphNode) ctx.morphNode.style.pointerEvents = value;
+        if (ctx.morphNode) {
+            ctx.morphNode.style.pointerEvents = value;
+            ctx.morphNode.setAttribute('touch-action', 'none');
+        }
     }
 },
 'focus', {
@@ -432,7 +435,8 @@ lively.morphic.Text.addMethods(
         setDisplay: 'setDisplayHTML',
         setWhiteSpaceHandling: 'setWhiteSpaceHandlingHTML',
         setWordBreak: 'setWordBreakHTML',
-        setInputAllowed: 'setInputAllowedHTML'
+        setInputAllowed: 'setInputAllowedHTML',
+        setIsSelectable: 'setIsSelectableHTML'
     }
 },
 'rendering', {
@@ -450,6 +454,7 @@ lively.morphic.Text.addMethods(
         this.setWhiteSpaceHandlingHTML(ctx, this.getWhiteSpaceHandling());
         this.setWordBreakHTML(ctx, this.getWordBreak());
         this.setInputAllowedHTML(ctx, this.inputAllowed());
+        this.setIsSelectableHTML(ctx, this.isSelectable());
         this.setExtent(this.getExtent());
         this.fit();
         if (this.textChunks) {
@@ -522,20 +527,20 @@ lively.morphic.Text.addMethods(
         if (ctx.textNode) ctx.textNode.style.fontSize = size + 'pt'
     },
     setFontFamilyHTML: function(ctx, fontName) {
-        if (ctx.textNode) ctx.textNode.style.fontFamily = fontName;
+        if (ctx.textNode) ctx.textNode.style.fontFamily = fontName || "";
     },
     setTextColorHTML: function(ctx, color) {
         if (ctx.textNode) {
             if (color && color.toCSSString) color = color.toCSSString();
-            ctx.textNode.style.color = color
+            ctx.textNode.style.color = color || ""
         }
     },
 
     setFontWeightHTML: function(ctx, value) {
-        if (ctx.textNode) ctx.textNode.style.fontWeight = value;
+        if (ctx.textNode) ctx.textNode.style.fontWeight = value || "";
     },
     setFontStyleHTML: function(ctx, value) {
-        if (ctx.textNode) ctx.textNode.style.fontStyle = value;
+        if (ctx.textNode) ctx.textNode.style.fontStyle = value || "";
     },
     setTextDecorationHTML: function(ctx, value) {
         if (ctx.textNode) ctx.textNode.style.textDecoration = value;
@@ -547,7 +552,7 @@ lively.morphic.Text.addMethods(
     },
     setAlignHTML: function(ctx, alignMode) {
         if (!ctx.textNode) return;
-        ctx.textNode.style.textAlign = alignMode;
+        ctx.textNode.style.textAlign = alignMode || "";
         this.setWhiteSpaceHandling(alignMode === 'justify' ? 'pre-line' : this.getWhiteSpaceHandling());
     },
     setVerticalAlignHTML: function(ctx, valignMode) {
@@ -560,7 +565,7 @@ lively.morphic.Text.addMethods(
     },
     setDisplayHTML: function(ctx, mode) {
         if (ctx.textNode)
-            ctx.textNode.style.display = mode;
+            ctx.textNode.style.display = mode || "";
     },
     setWhiteSpaceHandlingHTML: function(ctx, modeString) {
         if (ctx.textNode)
@@ -577,6 +582,9 @@ lively.morphic.Text.addMethods(
         if (!ctx.textNode) return;
         ctx.textNode.contenteditable = bool;
         ctx.textNode.setAttribute('contenteditable', bool);
+    },
+    setIsSelectableHTML: function(ctx, bool) {
+        if (!ctx.textNode) return;
         var cssClasses = ctx.textNode.className,
             hasVisibleSelectionClass = cssClasses.include('visibleSelection');
         if (bool && !hasVisibleSelectionClass) {
@@ -992,14 +1000,17 @@ lively.morphic.Shapes.Ellipse.addMethods(
     reallyContainsPoint: function(p) {
         // Check that p is really within the ellipse shape
         // Note border width not yet taken into account
-        var bnds = this.getBounds(), c = bnds.center();
-        var a = (p.x-c.x)/bnds.width, b = (p.y-c.y)/bnds.height;
-
-        // If it is filled, then any inside point is a hit
-        if (this.getFill() != null) return a*a + b*b <= 0.25;
-
-        // Case of unfilled ellipse we allow outer ring
-        return a*a + b*b > 0.20 && a*a + b*b < 0.25;
+        var bnds = this.getBounds(), c = bnds.center(),
+            dx = (p.x-c.x) / bnds.width, dy = (p.y-c.y) / bnds.height;
+        // The Canonical form is
+        // where a and b are one-half of the ellipse's major and minor axes respectively.
+        // We are using the entire width and height, so each term is 1/4 as big.
+        // Beacuse of this, the constant must be 1/4 instead of 1.
+        return this.getFill() ?
+            // If it is filled, then any inside point is a hit
+            dx*dx + dy*dy <= 0.25 :
+            // Case of unfilled ellipse we allow outer ring
+            dx*dx + dy*dy > 0.20 && dx*dx + dy*dy < 0.25;
     }
 
 });

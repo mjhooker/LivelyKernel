@@ -41,7 +41,7 @@ Object.extend(lively.ast, {
             submorphs: [{
                 _Align: "center",
                 _ClipMode: "hidden",
-                _Extent: lively.pt(87.0,20.0),
+                _Extent: lively.pt(103.0,20.0),
                 _FontFamily: "Helvetica",
                 _HandStyle: "pointer",
                 _InputAllowed: false,
@@ -66,10 +66,10 @@ Object.extend(lively.ast, {
         alignSubmorphs: function alignSubmorphs() {
             this.statusText.align(this.statusText.bounds().center(), this.innerBounds().bottomCenter().addXY(0,-8));
             if (lively.Config.get('loadRewrittenCode')) {
-                this.statusText.textString = 'Debugging: on';
+                this.statusText.textString = 'In Debug Session';
                 this.statusText.applyStyle({textColor: Color.green.lighter()});
             } else {
-                this.statusText.textString = 'Debugging: off';
+                this.statusText.textString = 'Not Debugging';
                 this.statusText.applyStyle({textColor: Color.red});
             }
             this.menu && this.menu.align(
@@ -77,7 +77,6 @@ Object.extend(lively.ast, {
                 this.innerBounds().bottomCenter().addXY(2, -8-20));
         },
             collapse: function collapse() {
-            // this.collapse()
             this.withCSSTransitionForAllSubmorphsDo(function() {
                 this.setExtent(lively.pt(130.0,30.0));
                 this.alignSubmorphs();
@@ -92,16 +91,32 @@ Object.extend(lively.ast, {
             var self = this,
                 dbgStmt = !!lively.Config.get('enableDebuggerStatements'),
                 items = [
-                ['[' + (dbgStmt ? ' ' : 'x') + '] ignore debugger', function() {
+                ['[' + (dbgStmt ? 'x' : ' ') + '] break on debugger', function() {
                     lively.Config.set('enableDebuggerStatements', !dbgStmt);
+                    self.collapse();
+                }],
+                ['clear cache', function() {
+                    if (!lively.IndexedDB.isAvailable()) return self.collapse();
+                    lively.IndexedDB.hasStore('Debugging', function(err, exists) {
+                        if (err) throw err;
+                        if (exists)
+                            lively.IndexedDB.clear(function(err) {
+                                if (err)
+                                    alert('Could not clear Debugging cache: ' + err.message);
+                                else
+                                    alertOK('Cleared Debugging cache!');
+                            }, 'Debugging');
+                        else
+                            alertOK('No cache to be cleared!');
+                    });
                     self.collapse();
                 }]
             ];
             this.menu = new lively.morphic.Menu(null, items);
             this.menu.openIn(this, pt(0,0), false);
-            this.menu.setBounds(lively.rect(0,-66,130,23*1));
+            this.menu.setBounds(lively.rect(0, -66, 130, 23*items.length));
             this.withCSSTransitionForAllSubmorphsDo(function() {
-                this.setExtent(pt(140, 46+23*1));
+                this.setExtent(pt(140, 46 + 20*items.length));
                 this.alignSubmorphs();
             }, 500, function() {});
         },
@@ -125,28 +140,112 @@ Object.extend(lively.ast, {
         },
             onWorldResize: function onWorldResize() {
             this.alignInWorld();
-        },
-            reset: function reset() {
-            this.setExtent(lively.pt(100.0,30.0));
-            this.statusText = lively.morphic.Text.makeLabel('Debugging off', {align: 'center', textColor: Color.red, fill: null});
-            this.addMorph(this.statusText);
-            this.statusText.name = 'statusText'
-            this.setFixed(true);
-            this.isEpiMorph = true;
-            this.setHandStyle('pointer');
-            this.statusText.setHandStyle('pointer');
-            this.startStepping(5*1000, 'update');
-            this.grabbingEnabled = false;
-            this.lock();
-            this.doNotSerialize = ['currentMenu']
-            this.currentMenu = null;
-            this.buildSpec();
         }
         });
-
         lively.BuildSpec('lively.ast.DebuggingFlap').createMorph().openInWorld();
     });
 })();
+
+// patch JSLoader to rewrite code on load
+Object.extend(JSLoader, {
+
+    evalJavaScriptFromURL: function(url, source, onLoadCb, headers) {
+        if (!source) { console.warn('Could not load %s', url); return; }
+
+        function declarationForGlobals(rewrittenAst) {
+            // _0 has all global variables
+            var propAccess = lively.PropertyPath('body.0.block.body.0.declarations.4.init.properties'),
+                globalProps = propAccess.get(rewrittenAst);
+            if (!globalProps) {
+                console.warn('Cannot access global declarations of %s ', url);
+                return '\n';
+            }
+            var globalVars = globalProps.pluck('key').pluck('value');
+            return globalVars.map(function(varName) {
+                return Strings.format('Global["%s"] = _0["%s"];', varName, varName);
+            }).join('\n');;
+        }
+
+        // rewrite code
+        var relUrl = url.indexOf(LivelyLoader.rootPath) == 0 ? url.substr(LivelyLoader.rootPath.length) : url,
+            ast, rewrittenAst, rewrittenSource;
+
+        function executeCode(reuse) {
+            var noRewrite = relUrl.substr(0, 9) == 'core/lib/';
+            if (noRewrite)
+                rewrittenSource = source;
+            else
+                if (!reuse) {
+                    ast = lively.ast.acorn.parse(source, { locations: true, directSourceFile: relUrl });
+                    rewrittenAst = lively.ast.Rewriting.rewrite(ast, LivelyDebuggingASTRegistry, relUrl);
+                    rewrittenSource = Strings.format(
+                        '(function() {\n%s\n%s\n})();',
+                        escodegen.generate(rewrittenAst),
+                        declarationForGlobals(rewrittenAst)
+                    );
+                    ast.source = source;
+                }
+
+            try {
+                // adding sourceURL improves conventional debugging as it will be used
+                // in stack traces by some debuggers
+                eval.call(Global, rewrittenSource + "\n//# sourceURL=" + url);
+
+                !reuse && !noRewrite && lively.IndexedDB.isAvailable() && lively.IndexedDB.set(relUrl, {
+                    date: headers['last-modified'],
+                    ast: ast,
+                    rewrittenAst: rewrittenAst,
+                    rewrittenSource: rewrittenSource
+                }, null /* callback? */, 'Debugging');
+            } catch (e) {
+                console.error('Error when evaluating %s: %s\n%s', url, e, e.stack);
+            }
+            if (typeof onLoadCb === 'function') onLoadCb();
+        }
+
+        if (lively.IndexedDB.isAvailable()) {
+            lively.IndexedDB.ensureObjectStore('Debugging', null, function() {
+                lively.IndexedDB.get(relUrl, function(err, cached) {
+                    var reuse = false;
+                    if (!err && cached != undefined) {
+                        if (cached.date == headers['last-modified']) {
+                            ast = cached.ast;
+                            rewrittenAst = cached.rewrittenAst;
+                            rewrittenSource = cached.rewrittenSource;
+
+                            var regEntries = [];
+                            acorn.walk.forEachNode(ast, function(node, state, depth, type) {
+                                if (node.hasOwnProperty('registryId'))
+                                    state.pushIfNotIncluded(node);
+                            }, regEntries);
+                            if (LivelyDebuggingASTRegistry[relUrl] == undefined)
+                                LivelyDebuggingASTRegistry[relUrl] = [];
+                            regEntries.forEach(function(node) {
+                                LivelyDebuggingASTRegistry[relUrl][node.registryId] = node;
+                            });
+                            reuse = true;
+                        }
+                    }
+                    executeCode(reuse);
+                }, 'Debugging');
+            });
+        } else
+            executeCode();
+    }
+
+});
+
+var _getOption = JSLoader.getOption;
+JSLoader.getOption = function(option) {
+    switch (option) {
+    case 'loadRewrittenCode':
+        return false;
+    case 'onLoadRewrite':
+        return true;
+    default:
+        return _getOption.call(_getOption, option);
+    }
+}
 
 if (lively.Config.get('loadRewrittenCode'))
     lively.Config.set('improvedJavaScriptEval', false); // me no like improved eval yet
