@@ -144,6 +144,8 @@ Object.subclass('TestCase',
 'running (private)', {
     show: function(string) { this.log(string) },
     running: function() {
+        if (Config.serverInvokedTest)
+          URL.nodejsBase.withFilename("NodeJSEvalServer/").asWebResource().post("console.log('Test: " + this.id() + "');").content
         this.show('Running ' + this.id());
         this.statusUpdateFunc && this.statusUpdateFunc(this, 'running');
     },
@@ -385,8 +387,8 @@ Object.subclass('TestCase',
     },
     doMouseEvent: function(spec) {
         // cs: this should be moved to lively.morphic.tests.TestCase
-        // type one of click, pointerdown, pointerup, pointerover, pointermove, pointerout.
-        if (!spec.type) spec.type = 'pointerdown';
+        // type one of click, Global.Event.INPUT_TYPE_DOWN, Global.Event.INPUT_TYPE_UP, Global.Event.INPUT_TYPE_UP, Global.Event.INPUT_TYPE_MOVE, Global.Event.INPUT_TYPE_OUT.
+        if (!spec.type) spec.type = 'Global.Event.INPUT_TYPE_DOWN';
         if (!spec.pos) spec.pos = pt(0,0);
         if (!spec.button) spec.button = 0;
         var targetMorphOrNode = spec.target;
@@ -764,7 +766,7 @@ Object.subclass('TestResult', {
             selector: selector,
             err: error,
             toString: function(){ return Strings.format('%s.%s failed: \n\t%s (%s)',
-                className, selector, error.toString(), error.constructor? error.constructor.type : '' )
+                className, selector, error.stack || String(error), error.constructor? error.constructor.type : '' )
             }
         });
     },
@@ -785,7 +787,7 @@ Object.subclass('TestResult', {
             string += ' -- Failed tests: \n';
             this.failed.each(function(ea) {
                 string +=  ea.classname + '.' + ea.selector + '\n   -->'
-                    + ea.err.message +  '\n';
+                    + (ea.err.stack || ea.err.message) +  '\n';
             });
         }
         string += ' -- TestCases timeToRuns: \n';

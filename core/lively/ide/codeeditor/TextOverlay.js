@@ -1,27 +1,5 @@
 module('lively.ide.codeeditor.TextOverlay').requires('lively.DOMAbstraction').toRun(function() {
 
-(function setupCSS() {
-    var css = ".text-overlay {\n"
-            + "    z-index: 999;\n"
-            + "    font-family: Monaco, monospace;\n"
-            + "    font-size: 11px;\n"
-            + "    position: absolute;\n"
-            + "    color: white;\n"
-            + "    background: darkviolet;\n"
-            + "    padding: 1px;\n"
-            + "    border-radius: 4px;\n"
-            + "    box-shadow: 0px 0px 5px 3px rgb(160, 100, 210);\n"
-         // + "    text-shadow: 0px 0px 5px rgba(0,0,200, 0.7);\n"
-         // + "    text-shadow: 0px 0px 5px blue;\n"
-         // + "    text-shadow: 0px 0px 5px white;\n"
-            + "    white-space: pre;\n"
-            + "}\n"
-            + ".text-overlay.hidden {\n"
-            + "    display: none;\n"
-            + "}"
-    XHTMLNS.addCSSDef(css, 'lively.ide.CodeEditorTextOverlay');
-})();
-
 Object.subclass("lively.ide.CodeEditorTextOverlay.Overlay",
 "properties", {
     baseClassName: "text-overlay",
@@ -58,24 +36,52 @@ Object.subclass("lively.ide.CodeEditorTextOverlay.Overlay",
         this.onChange(evt,session);
     },
     update: function(html, markerLayer, session, config) {
+
         var startRow = config.firstRowScreen,
             endRow = config.lastRow,
             overlays = this.overlays || [],
-            classNames = [this.baseClassName];
+            classNames = [this.baseClassName],
+            overlaysPerRow = {};
+
+        var tagsToReplace = {'&': '&amp;', '<': '&lt;', '>': '&gt;'};
+
+        function replaceTag(tag) { return tagsToReplace[tag] || tag; }
 
         overlays.forEach(function(overlay) {
             if (overlay.start.row < startRow || overlay.start.row > endRow) return;
-            var screenPos = session.documentToScreenPosition(overlay.start.row, overlay.start.column),
-                x = config.padding + (config.characterWidth * screenPos.column),
-                y = config.lineHeight * (screenPos.row-config.firstRowScreen),
-                classes = classNames.concat(overlay.classNames).join(" ");
+
+            var row = overlay.start.row,
+                col = overlay.atLineEnd ? session.getLine(row).length : overlay.start.column,
+                overlaysAtRow = overlaysPerRow[row] || (overlaysPerRow[row] = []);
+
+            var lineEndOffset = overlay.atLineEnd ?
+              overlaysAtRow.reduce(function(sum, ea, i) {
+                return sum + (ea.text.length*config.characterWidth); },
+                overlaysAtRow.length*2*config.padding) : 0;
+
+            overlaysAtRow.push(overlay);
+
+            var screenPos = session.documentToScreenPosition(row, col),
+                offs = overlay.offset,
+                x = config.padding
+                  + lineEndOffset
+                  + (config.characterWidth * screenPos.column)
+                  + (offs ? offs.x : 0),
+                y = config.lineHeight * (screenPos.row-config.firstRowScreen) + (offs ? offs.y : 0),
+                data = overlay.data ? Object.keys(overlay.data).map(function(ea) {
+                  return "data-" + ea + '="' + overlay.data[ea] + '"'; }).join("") : "",
+                classes = classNames.concat(overlay.classNames).join(" "),
+                text = overlay.text.replace(/[&<>]/g, replaceTag);
+
             html.pushAll([
                 "<span",
                 " class=\"", classes, "\"",
-                " style=\"", "top:", y, "px;", "left:", x ,"px;"," \"",
+                " title=\"", text, "\"",
+                " style=\"", "top:", y, "px;", "left:", x , "px;", "font-size: ", (config.lineHeight*2/3) ,"px", "\"",
+                data,
                 ">",
-                overlay.text,
-                "</span>"])
+                text,
+                "</span>"]);
         });
     },
     redraw: function(session) {
@@ -133,10 +139,21 @@ require('lively.ide.CodeEditor').toRun(function() {
                 overlay.redraw(ed.session);
             });
         },
-        removeTextOverlay: function() {
+
+        removeTextOverlay: function(options) {
+            var klass = options && options.className,
+                self = this;
             this.withOverlaySupport(function($overlay, ed) {
-                $overlay.detach(ed.session);
-                delete ed.session.$textOverlay;
+                if (klass) {
+                  $overlay.overlays = $overlay.overlays.filter(function(ea) {
+                    return !ea.classNames || !ea.classNames.include(klass); });
+                }
+                if (klass && $overlay.overlays.length) {
+                  self.redrawTextOverlays();
+                } else {
+                  $overlay.detach(ed.session);
+                  delete ed.session.$textOverlay;
+                }
             });
         },
 

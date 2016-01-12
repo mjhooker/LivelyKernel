@@ -246,7 +246,13 @@
                         for (var i = 0; i < consumers.length; i++) {
                             var consumerFunc = consumers[i][name];
                             if (consumerFunc) {
-                                consumerFunc.apply(consumers[i], arguments);
+                                try {
+                                    consumerFunc.apply(consumers[i], arguments);
+                                } catch (e) {
+                                    (console.$error || console.error)(
+                                        "Platform consumer %s errored on %s\nOriginal message:\n",consumers[i], name);
+                                    if (console["$"+name]) console["$"+name].apply(console, arguments);
+                                }
                             }
                         }
                     };
@@ -586,6 +592,27 @@
                     this.loadViaScript(exactUrl, onLoadCb);
             },
 
+        loadAllLibs: function(urlsAndTests,thenDo){
+            /*
+            Takes an array of Libraries to be loaded as well as true conditions for each.
+            In the form:
+            {url: library url,
+            test: loadtest function for library}
+            */
+
+            lively.lang.arr.mapAsyncSeries(
+            urlsAndTests,
+            function tester(urlAndTest, _, next) {
+              Global.JSLoader.loadJs(urlAndTest.url);
+              lively.lang.fun.waitFor(
+                1000, urlAndTest.test, next);
+            },
+            function(err) {
+              show(err ? "Got a timeout loading a lib " + err : "loaded libs");
+              thenDo(err);
+            });
+        },
+
         loadJSON: function(url, onLoadCb, beSync) {
             this.getViaXHR(beSync, url, function(err, content, headers) {
                 if (err) {
@@ -627,7 +654,11 @@
             var parentNode = this.findParentScriptNode(),
                 xmlNamespace = parentNode.namespaceURI,
                 script = document.createElementNS(xmlNamespace, 'script');
-            script.setAttributeNS(null, 'type', 'text/ecmascript');
+            if (Config.useBabelJsForScriptLoad && typeof babel !== "undefined") {
+              script.setAttribute('type', "text/babel");
+            } else {
+              script.setAttribute('type', 'text/ecmascript');
+            }
             parentNode.appendChild(script);
             script.setAttributeNS(null, 'id', url);
             if (script.namespaceURI === this.SVGNamespace) {
@@ -652,6 +683,9 @@
                 try {
                     // adding sourceURL improves debugging as it will be used
                     // in stack traces by some debuggers
+                    if (Config.useBabelJsForScriptLoad && typeof babel !== "undefined") {
+                      source = babel.transform(source).code;
+                    }
                     Global.eval(source + "\n\n//# sourceURL=" + url);
                 } catch (e) {
                     console.error('Error when evaluating %s: %s\n%s', url, e, e.stack);

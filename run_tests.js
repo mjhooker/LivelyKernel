@@ -29,8 +29,14 @@ function getURLParam(name) {
     return match && unescape(match[1]);
 }
 
+function serverLog(msg) {
+    URL.nodejsBase.withFilename("NodeJSEvalServer/").asWebResource().post(msg).content;
+}
 
 // some preparation
+
+serverLog("Automatic test process started.");
+
 var testRunId = getURLParam("testRunId");
 
 if (!testRunId) {
@@ -63,8 +69,6 @@ var baseTests = [
     // AST / OMeta
     "ometa.tests.OmetaTests",
     "lively.ast.tests.AcornTests",
-    "lively.ast.tests.AstTests",
-    "lively.ast.tests.Comments",
     "lively.ast.tests.InterpreterTests",
     "lively.ast.tests.RewriterTests",
 
@@ -98,6 +102,8 @@ var browserTests = [
 
     // persistence
     "lively.persistence.tests.MassMorphCreation",
+    'lively.persistence.tests.MorphicState',
+    'lively.persistence.tests.MorphicProperties',
 
     // presentation
     "lively.presentation.tests.Builds",
@@ -117,10 +123,20 @@ var browserTests = [
 
     // ide / SCB
     "lively.ide.tests.ASTEditingSupport",
+    'lively.ide.tests.BrowserAddonTests',
     "lively.ide.tests.CodeEditor",
+    // rk 2015-09-02: travis seems to have issues with maintining the l2l
+    // connection needed for the shell tests and the shell environment itself
+    // 'lively.ide.tests.CommandLineInterface',
     "lively.ide.codeeditor.tests.JumpChar",
+    "lively.ide.codeeditor.tests.DraggableCode",
+    "lively.ide.codeeditor.tests.MorphicOverlays",
     "lively.ide.codeeditor.tests.TextOverlays",
+    'lively.ide.codeeditor.tests.DiffMode',
+    'lively.ide.codeeditor.tests.TreeMode',
+    'lively.ide.git.tests.Interface',
     "lively.ide.tests.FileParserTests",
+    "lively.ide.tests.FileSystem",
     "lively.ide.tests.ModuleLookup",
     "lively.ide.tests.SCBTests",
     "lively.ide.tests.SyntaxHighlighting",
@@ -135,6 +151,7 @@ var browserTests = [
     "lively.morphic.tests.Connectors",
     "lively.morphic.tests.CoreToolsTests",
     "lively.morphic.tests.DataGridTests",
+    "lively.morphic.tests.DraggableJavaScript",
     "lively.morphic.tests.DiffMerge",
     "lively.morphic.tests.EventTests",
     "lively.morphic.tests.Graphics",
@@ -146,6 +163,7 @@ var browserTests = [
     "lively.morphic.tests.Morphic2",
     "lively.morphic.tests.MorphAddons",
     "lively.morphic.tests.PathTests",
+    "lively.morphic.tests.Scrubbing",
     "lively.morphic.tests.Serialization",
     "lively.morphic.tests.ShapeTests",
     "lively.morphic.tests.StyleSheets",
@@ -155,11 +173,10 @@ var browserTests = [
     "lively.morphic.tests.TextUndoTests",
     "lively.morphic.tests.Tree",
 
-    // cop
-    "cop.tests.LayerTests",
+    "lively.users.tests.Tests",
 
-    // apps
-    "apps.tests.Handlebars"
+    // cop
+    "cop.tests.LayerTests"
 ];
 
 var testList = baseTests;
@@ -190,13 +207,17 @@ prepareConfig();
     lively.morphic.World.current().setCurrentUser("run_tests-" + testRunId);
 })();
 
+serverLog("Automatic test process configuration done.");
+
 if (lively.Config.get("serverTestDebug")) {
+    // So we can connect to the test server via l2l
     function sendLogMessage() {
         var code = "console.log('debugging the tests in progress');";
         URL.nodejsBase.withFilename("NodeJSEvalServer/").asWebResource().post(code).content;
     }
     Global.travisDebugLogInterval = setInterval(sendLogMessage, 10*1000);
 } else {
+    serverLog("Automatic test process will run " + testList.length + " tests.");
     require(['lively.TestFramework'].concat(testList)).toRun(function() {
         var suite = TestSuite.forAllAvailableTests(suiteFilter);
         suite.runFinished = function() {

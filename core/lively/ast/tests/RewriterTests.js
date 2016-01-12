@@ -1,11 +1,11 @@
-module('lively.ast.tests.RewriterTests').requires('lively.ast.Rewriting', 'lively.ast.StackReification', 'lively.ast.AstHelper', 'lively.TestFramework').toRun(function() {
+module('lively.ast.tests.RewriterTests').requires('lively.ast.Rewriting', 'lively.ast.StackReification', 'lively.TestFramework').toRun(function() {
 
 TestCase.subclass('lively.ast.tests.RewriterTests.AcornRewrite',
 'running', {
 
     setUp: function($super) {
         $super();
-        this.parser = lively.ast.acorn;
+        this.parser = lively.ast;
         this.rewrite = function(node) {
             return lively.ast.Rewriting.rewrite(node, astRegistry, 'AcornRewriteTests');
         };
@@ -44,6 +44,7 @@ TestCase.subclass('lively.ast.tests.RewriterTests.AcornRewrite',
                 type: "ObjectExpression",
                 properties: Object.keys(varMapping).map(function(k) {
                     return {
+                        type: "Property",
                         kind: "init",
                         key: {type: "Literal",value: k},
                         value: {name: varMapping[k],type: "Identifier"}
@@ -160,7 +161,7 @@ TestCase.subclass('lively.ast.tests.RewriterTests.AcornRewrite',
     },
 
     assertASTNodesEqual: function(node1, node2, msg) {
-        var notEqual = lively.ast.acorn.compareAst(node1, node2);
+        var notEqual = lively.ast.compareAst(node1, node2);
         if (!notEqual) return;
         this.assert(false, 'nodes not equal: ' + (msg ? '\n  ' + msg : '') + '\n  ' + notEqual.join('\n  '));
     },
@@ -465,7 +466,7 @@ TestCase.subclass('lively.ast.tests.RewriterTests.AcornRewrite',
         var func = function() { function g() {}; return g(); }, returnStmt;
         func.stackCaptureMode();
         var returns = [];
-        lively.ast.acorn.withMozillaAstDo(func.asRewrittenClosure().ast, returns, function(next, node, state) {
+        lively.ast.withMozillaAstDo(func.asRewrittenClosure().ast, returns, function(next, node, state) {
             if (node.type === 'ReturnStatement') state.push(node); return next();
         });
         this.assertEquals(1, returns.length, "not just one return?")
@@ -862,17 +863,166 @@ TestCase.subclass('lively.ast.tests.RewriterTests.AcornRewrite',
             );
         this.assertASTMatchesCode(result, expected);
         this.assertASTNodesEqual(ast, astCopy, 'Origial AST was modified during rewrite');
+    },
+
+    test37ArrowFunctionWithSingleBodyNode: function() {
+        var src = 'var x = foo => ({x: 23})',
+            ast = this.parser.parse(src),
+            astCopy = Object.deepCopy(ast),
+            result = this.rewrite(ast),
+            sourceResult = escodegen.generate(result);
+        this.assert(sourceResult.include("function (foo)"), "arrow expr not converted to function?");
+        this.assert(sourceResult.include("return { x: 23 };"), "arrow result not returning?");
     }
 
 });
+lively.ast.tests.RewriterTests.AcornRewrite.subclass('lively.ast.tests.RewriterTests.RewriteForRecording',
+'running', {
 
+    // setUp: function($super) {
+    //     $super();
+    //     this.parser = lively.ast;
+    //     this.rewrite = function(node) {
+    //         return lively.ast.Rewriting.rewrite(node, astRegistry, 'AcornRewriteTests');
+    //     };
+    //     this.oldAstRegistry = lively.ast.Rewriting.getCurrentASTRegistry();
+    //     var astRegistry = this.astRegistry = {};
+    //     lively.ast.Rewriting.setCurrentASTRegistry(astRegistry);
+    // },
+
+    // tearDown: function($super) {
+    //     $super();
+    //     lively.ast.Rewriting.setCurrentASTRegistry(this.oldAstRegistry);
+    // }
+
+},
+'helper', {
+
+    recordIt: function(exprToRecord, level, optRecorderName) {
+      var recorderName = optRecorderName || "__test_recordIt__";
+      return lively.lang.string.format(
+        "%s(%s, __%s, __/[0-9]+|lastNode/__, 'AcornRewriteTests', %s);",
+        recorderName, exprToRecord, level, level)
+    },
+
+    tryCatch: function(level, varMapping, inner, optOuterLevel, recordArgs) {
+        level = level || 0;
+        optOuterLevel = !isNaN(optOuterLevel) ? optOuterLevel : (level - 1);
+
+        var argRecordings = Object.keys(varMapping)
+              .map(function(argName) { return argName === "this" ? null : this.recordIt(argName, level); }, this)
+              .compact(),
+            argRecordingsString = argRecordings.length ? argRecordings.join("\n") + "\n" : "";
+
+        return Strings.format(
+              "var _ = {}, lastNode = undefined, debugging = false, __%s = [], _%s = %s;\n"
+            + "__%s.push(_, _%s, %s);\n"
+            + (recordArgs ? argRecordingsString : "\n")
+            + "%s\n",
+            level, level, generateVarMappingString(), level, level,
+            optOuterLevel < 0 ? 'Global' : '__' + optOuterLevel,
+            inner); //, level, "__/[0-9]+/__");
+
+        // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+        function generateVarMappingString() {
+            if (!varMapping) return '{}';
+            var ast = {
+                type: "ObjectExpression",
+                properties: Object.keys(varMapping).map(function(k) {
+                    return {
+                        type: "Property",
+                        kind: "init",
+                        key: {type: "Literal",value: k},
+                        value: {name: varMapping[k],type: "Identifier"}
+                    }
+                })
+            };
+            return escodegen.generate(ast);
+        }
+    },
+
+// delete lively.ast.tests.RewriterTests.RewriteForRecording.prototype.closureWrapper
+
+    closureWrapper: function (level, name, args, innerVarDecl, inner, optInnerLevel) {
+        // something like:
+        // __createClosure('AcornRewriteTests', 333, __0, function () {
+        //     try {
+        //         var _ = {}, _1 = {}, __1 = [_,_1,__0];
+        //     ___ DO INNER HERE ___
+        //     } catch (e) {...}
+        // })
+        var argDecl = innerVarDecl || {};
+        optInnerLevel = !isNaN(optInnerLevel) ? optInnerLevel : (level + 1);
+        args.forEach(function(argName) { argDecl[argName] = argName; });
+        argDecl["this"] = "this";
+        return Strings.format(
+            "__createClosure('AcornRewriteTests', __/[0-9]+/__, __%s, function %s(%s) {\n"
+          + this.tryCatch(optInnerLevel, argDecl, inner, level, true)
+          + "})", level, name, args.join(', '));
+    }
+},
+'testing', {
+
+
+    test01RecordFunctionParams: function() {
+        // var t = new lively.ast.tests.RewriterTests.AcornRewrite();
+        // t.postfixResult(t.setVar(3, "foo", 23), 10);
+        // t.prefixResult("1+2", 10)
+        // t.storeResult("1+3", 10);
+        // t.closureWrapper(1, "foo", ["n", "m"], {}, "1+2", 3)
+
+        // this.doitContext = new lively.ast.tests.RewriterTests.RewriteForRecording()
+        // this.setUp()
+
+        var source = "function foo(n, m) { return n; }"
+        // lively.ast.printAst(source, {printIndex: true});
+
+
+        var recordingAstRegistry = {};
+        var recordingRewriter = new lively.ast.Rewriting.RecordingRewriter(recordingAstRegistry, "AcornRewriteTests", "__test_recordIt__");
+        // var recordingRewriter = new lively.ast.Rewriting.Rewriter(recordingAstRegistry, "AcornRewriteTests", "__test_recordIt__");
+        var ast = lively.ast.parse(source, { addSource: true });
+        var recordingRewrite = recordingRewriter.rewrite(ast);
+        var result = escodegen.generate(recordingRewrite);
+
+        var expected = this.tryCatch(0,
+          {"this": "this", foo: this.closureWrapper(
+            0, 'foo', ["n", "m"], {},
+            // "return " + this.recordIt('('+this.postfixResult(this.getVar(1, 'n'), 3)+')', 1))
+            "return " + this.getVar(1, 'n') + ";")
+          }, this.pcAdvance(6) + ";");
+
+        this.assertASTMatchesCode(recordingRewrite, expected);
+    },
+
+    test02RecordReturnStatement: function() {
+        var source = "function foo() { return 1; }"
+
+        var recordingAstRegistry = {};
+        var recordingRewriter = new lively.ast.Rewriting.RecordingRewriter(recordingAstRegistry, "AcornRewriteTests", "__test_recordIt__");
+        // var recordingRewriter = new lively.ast.Rewriting.Rewriter(recordingAstRegistry, "AcornRewriteTests", "__test_recordIt__");
+        var ast = lively.ast.parse(source, { addSource: true });
+        var recordingRewrite = recordingRewriter.rewrite(ast);
+        var result = escodegen.generate(recordingRewrite);
+
+        var expected = this.tryCatch(0,
+          {"this": "this", foo: this.closureWrapper(
+            0, 'foo', [], {},
+            // "return " + this.recordIt('('+this.postfixResult("1", 1)+')', 1))
+            "return 1;")
+          }, this.pcAdvance(4) + ";");
+
+        this.assertASTMatchesCode(recordingRewrite, expected);
+    }
+});
 TestCase.subclass('lively.ast.tests.RewriterTests.AcornRewriteExecution',
 // checks that rewritten code doesn't introduce semantic changes
 'running', {
 
     setUp: function($super) {
         $super();
-        this.parser = lively.ast.acorn;
+        this.parser = lively.ast;
         this.rewrite = function(node) {
             return lively.ast.Rewriting.rewrite(node, astRegistry, 'AcornRewriteTests');
         };
@@ -1092,13 +1242,13 @@ TestCase.subclass('lively.ast.tests.RewriterTests.ContinuationTest',
         }
 
         var expected = { isContinuation: true },
-            runResult = lively.ast.StackReification.run(code, this.astRegistry),
-            frame = runResult.frames().first();
+            runResult = lively.ast.StackReification.run(code, this.astRegistry);
         this.assert(runResult.isContinuation, 'no continuation');
 
         // can we access the original ast, needed for resuming?
-        var capturedAst = frame.getOriginalAst(),
-            generatedAst = lively.ast.acorn.parseFunction(String(code));
+        var frame = runResult.frames().first(),
+            capturedAst = frame.getOriginalAst(),
+            generatedAst = lively.ast.parseFunction(String(code));
         generatedAst.type = capturedAst.type;
         this.assertASTNodesEqual(generatedAst, capturedAst);
 
@@ -1128,10 +1278,10 @@ TestCase.subclass('lively.ast.tests.RewriterTests.ContinuationTest',
         this.assertEquals(Global, continuation.currentFrame.getThis(), 'val of this');
 
         // captured asts
-        var expectedAst = lively.ast.acorn.parseFunction('function() { debugger; return x * 2; }'),
+        var expectedAst = lively.ast.parseFunction('function() { debugger; return x * 2; }'),
             actualAst = frame1.getOriginalAst();
         this.assertASTNodesEqual(expectedAst, actualAst);
-        this.assertASTNodesEqual(lively.ast.acorn.parseFunction(String(code)), frame2.getOriginalAst());
+        this.assertASTNodesEqual(lively.ast.parseFunction(String(code)), frame2.getOriginalAst());
 
         // access the node where execution stopped
         var resumeNode = frame1.getPC(),
@@ -1513,7 +1663,7 @@ TestCase.subclass('lively.ast.tests.RewriterTests.ContinuationTest',
         this.assert(runResult.isContinuation, 'no continuation');
 
         var capturedAst = frame.getOriginalAst(),
-            generatedAst = lively.ast.acorn.parseFunction(String(code));
+            generatedAst = lively.ast.parseFunction(String(code));
         generatedAst.type = capturedAst.type;
         this.assertASTNodesEqual(generatedAst, capturedAst);
         this.assertIdentity(capturedAst.body.body[1].argument, frame.getPC(), 'pc');

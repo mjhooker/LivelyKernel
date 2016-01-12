@@ -107,29 +107,10 @@ lively.morphic.Morph.addMethods(
                     if (!excludes.include(name)) layout[name] = prop; });
             }
         },
-        shape: { exclude: true,
-                 getter: function(morph, val) {
-                    if(morph.shape.constructor.name === 'Ellipse') {
-                        var shape = {}
-                        for ( var key in morph.shape ) {
-                            if(key != '_renderContext')
-                                shape[key] = morph.shape[key];
-                        }
-                        shape.constructor = morph.shape.constructor;
-                        return shape;
-                    } else {
-                        return null;
-                    }
-                },
-                recreate: function(instance, spec) {
-                    if(spec.shape && spec.shape.constructor.name === 'Ellipse') {
-                        var shape = new spec.shape.constructor();
-                        for ( var key in spec.shape )
-                            shape[key] = spec.shape[key];
-                        instance.setShape(shape);
-                    }
-                }
-            }
+        shape: {
+          exclude: true,
+          getter: function(morph, val) { return morph.getShape().constructor.type; }
+        }
     },
 
     getBuildSpecProperties: function(rawProps) {
@@ -439,7 +420,8 @@ Object.extend(lively.morphic.Morph, {
             onFromBuildSpecCreated: function($super) {
                 $super();
                 this.tabContainer = this.owner;
-                this.tabs = this.submorphs.clone();
+                this.tabs = this.submorphs.filter(function(ea) {
+                  return !!ea.isTab; });
             }
         });
 
@@ -463,6 +445,9 @@ Object.extend(lively.morphic.Morph, {
                 label: {
                     defaultValue: '',
                     getter: function(morph, val) { return val.textString || ''; },
+                    recreate: function(instance, spec) {
+                        instance.label = spec.submorphs[0] && spec.submorphs[0].attributeStore.textString;
+                    },
                     exclude: true
                 },
                 pane: { // index of the pane in tabContainer.submorphs

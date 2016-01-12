@@ -30,10 +30,10 @@ lively.Closure.subclass('lively.ast.RewrittenClosure',
 
     rewrite: function(astRegistry) {
         var src = this.getFuncSource(),
-            ast = lively.ast.acorn.parseFunction(src),
+            ast = lively.ast.parseFunction(src),
             namespace = '[runtime]';
         if (this.originalFunc && this.originalFunc.sourceModule)
-            namespace = new URL(this.originalFunc.sourceModul.findUri()).relativePathFrom(URL.root);
+            namespace = new URL(this.originalFunc.sourceModule.findUri()).relativePathFrom(URL.root);
         return this.ast = lively.ast.Rewriting.rewriteFunction(ast, astRegistry, namespace);
     }
 
@@ -156,7 +156,8 @@ Object.extend(Global, {
 
     __createClosure: Global.__createClosure || function(namespace, idx, parentFrameState, f) {
         // FIXME: Either save idx and use __getClosure later or attach the AST here and now (code dup.)?
-        f._cachedAst = lively.ast.Rewriting.getCurrentASTRegistry()[namespace][idx];
+        var registry = lively.ast.Rewriting.getCurrentASTRegistry();
+        f._cachedAst = registry && registry[namespace] && registry[namespace][idx];
         // parentFrameState = [computedValues, varMapping, parentParentFrameState]
         f._cachedScopeObject = parentFrameState;
         f.livelyDebuggingEnabled = true;

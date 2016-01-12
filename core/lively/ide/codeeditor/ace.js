@@ -30,10 +30,34 @@ module('lively.ide.codeeditor.ace').requires('lively.Network'/*to setup lib*/).r
     ace.config.set("basePath", URL.root.withFilename("core/lib/ace/").toString());
     ace.config.set("modePath", URL.root.withFilename("core/lib/ace/").toString());
     // disable currently broken worker
-    ace.require('ace/edit_session').EditSession.prototype.setUseWorker(false);
+
+    (function aceSessionSetup(p) {
+      p.setUseWorker(false);
+      p.__defineGetter__("$useEmacsStyleLineStart", lively.lang.fun.False);
+      p.__defineSetter__("$useEmacsStyleLineStart", function(v) { return false; });
+    })(ace.require('ace/edit_session').EditSession.prototype);
     
-    // no Ctrl-Shift-Space
-    ace.require("ace/autocomplete").Autocomplete.startCommand.bindKey = "Ctrl-Space|Alt-Shift-Space|Alt-Space";
+    ace.require('ace/editor').Editor.prototype.focus = function () {
+        var _self = this, x = Global.scrollX, y = Global.scrollY;
+        setTimeout(function() {
+          _self.textInput.focus();
+          (function() { window.scrollTo(x, y); }).delay(0);
+        });
+        this.textInput.focus();
+        window.scrollTo(x, y)
+    };
+    
+    
+    ace.require("ace/virtual_renderer").VirtualRenderer.prototype.screenToTextCoordinates = function (x, y) {
+      var canvasPos = this.scroller.getBoundingClientRect();
+      var scale = lively.morphic.World.current().getScale()
+      x = x / scale;
+      y = y / scale;
+      var col = Math.round((x + this.scrollLeft - (canvasPos.left / scale) - this.$padding) / this.characterWidth);
+      var row = (y + this.scrollTop - (canvasPos.top / scale)) / this.lineHeight;
+      return this.session.screenToDocumentPosition(row, Math.max(col, 0));
+    }
+
 })();
 
 module('lively.ide');

@@ -1,4 +1,62 @@
-module('lively.net.tools.Wiki').requires('lively.morphic.Complete', 'lively.persistence.BuildSpec').toRun(function() {
+module('lively.net.tools.Wiki').requires('lively.morphic.Complete', 'lively.persistence.BuildSpec', 'lively.morphic.tools.MenuBar').toRun(function() {
+
+Object.extend(lively.net.tools.Wiki, {
+
+    getMenuBarEntries: function() {
+        return [lively.BuildSpec('lively.wiki.MenuBarEntry').createMorph()];
+    }
+
+});
+
+lively.BuildSpec('lively.wiki.MenuBarEntry', lively.BuildSpec('lively.morphic.tools.MenuBarEntry').customize({
+
+    name: 'LivelyWikiMenuBarEntry',
+    menuBarAlign: 'right',
+    textString: 'wiki',
+
+    style: lively.lang.obj.merge(lively.BuildSpec('lively.morphic.tools.MenuBarEntry').attributeStore.style, {
+        extent: lively.pt(40, 22),
+        toolTip: 'Versioning & co.'
+    }),
+
+    morphMenuItems: function morphMenuItems() {
+        function cmd(name) { return function() { lively.ide.commands.exec(name); }; }
+        var user = String($world.getUserName(true));
+        if (user === "null" || user === "undefined" || user === "unknown_user") user = null;
+        return [
+            user ?
+              ['Show login info', cmd('lively.net.wiki.tools.showLoginInfo')] :
+              ['Login', function() { $world.askForUserName(); }],
+            ['World versions', cmd('lively.ide.openVersionsViewer')]
+        ];
+    },
+
+    update: function update() {
+      var menuBarItem = this;
+      $world.getUserName(true, function(err, user) {
+        user = String(user);
+        if (user === "null" || user === "undefined" || user === "unknown_user") user = null;
+        var label = user ? user : "not logged in";
+        menuBarItem.textString = label;
+
+        var morphsLeft = menuBarItem.owner.submorphs.without(menuBarItem).filter(function(ea) { return ea.bounds().right() < menuBarItem.bounds().left() && ea.menuBarAlign === "right"; });
+        var morphRight = menuBarItem.owner.submorphs.without(menuBarItem).min(function(ea) { return Math.abs(ea.bounds().left() - menuBarItem.bounds().right()); });
+
+        menuBarItem.applyStyle({fixedWidth: false});
+        var oldExtent = menuBarItem.getExtent();
+        menuBarItem.fitThenDo(function() {
+          menuBarItem.applyStyle({fixedWidth: true});
+          var delta = menuBarItem.getExtent().subPt(oldExtent);
+          menuBarItem.align(menuBarItem.bounds().topRight(), morphRight.bounds().topLeft());
+          morphsLeft.invoke("moveBy", delta.negated().withY(0));
+        });
+      });
+    },
+
+    onLoad: function onLoad() { this.update.bind(this).delay(.4); this.startStepping(10 * 1000, "update"); },
+
+    onFromBuildSpecCreated: function onFromBuildSpecCreated() { this.onLoad(); }
+}));
 
 lively.BuildSpec("lively.wiki.LoginInfo", {
     _BorderColor: null,
@@ -281,7 +339,8 @@ lively.BuildSpec("lively.wiki.LoginInfo", {
         this.morph.update();
     },
         httpCheckPassword: function httpCheckPassword(userName, password, thenDo) {
-        Global.URL.root.withFilename("uvic-check-password").asWebResource()
+        var paths = lively.Config.get('authPaths');
+        URL.root.withPath(paths['checkPassword']).asWebResource()
             .beAsync()
             .post(JSON.stringify({name: userName, password: password}), 'application/json')
             .withJSONWhenDone(function(json, status) {
@@ -305,9 +364,9 @@ lively.BuildSpec("lively.wiki.LoginInfo", {
         this.httpDataRequest("get", doFunc);
     },
         httpDataRequest: function httpDataRequest(method, doFunc) {
-        var self = this;
-        // FIXME: should not say uvic-...
-        Global.URL.root.withFilename('uvic-current-user').asWebResource()
+        var self = this,
+            paths = lively.Config.get('authPaths');
+        URL.root.withPath(paths['currentUser']).asWebResource()
             .beAsync()[method]()
             .withJSONWhenDone(function(json, status) {
                 var err = null;
@@ -356,8 +415,9 @@ lively.BuildSpec("lively.wiki.LoginInfo", {
             });
     },
         httpLogin: function httpLogin(name, password, thenDo) {
-        var self = this;
-        Global.URL.root.withFilename("uvic-login").asWebResource()
+        var self = this,
+            paths = lively.Config.get('authPaths');
+        URL.root.withPath(paths['login']).asWebResource()
             .beAsync()
             .post(JSON.stringify({name: name, password: password}), 'application/json')
             .withJSONWhenDone(function(json, status) {
@@ -365,16 +425,18 @@ lively.BuildSpec("lively.wiki.LoginInfo", {
             });
     },
         httpLogout: function httpLogout(thenDo) {
-        var self = this;
-        Global.URL.root.withFilename("uvic-logout").asWebResource()
+        var self = this,
+            paths = lively.Config.get('authPaths');
+        URL.root.withPath(paths['logout']).asWebResource()
             .beAsync().post()
             .whenDone(function(_, status) {
                 thenDo.call(self, !status.isSuccess() ? new Error(String(status)) : null);
             });
     },
         httpModifyUser: function httpModifyUser(data, thenDo) {
-        var self = this;
-        Global.URL.root.withFilename("uvic-current-user").asWebResource()
+        var self = this,
+            paths = lively.Config.get('authPaths');
+        URL.root.withPath(paths['currentUser']).asWebResource()
             .beAsync()
             .post(JSON.stringify(data), 'application/json')
             .withJSONWhenDone(function(json, status) {
@@ -799,7 +861,7 @@ lively.BuildSpec('lively.wiki.VersionViewer', {
         if (!path) { $world.inform('No resource selected'); return; }
         var sel = this.get('VersionList').selection;
         if (!sel) { $world.inform('No version selected'); return; }
-        
+
         var prompt = 'Do you really want to revert \n'
                     + path
                     + '\nto its version from\n'
@@ -839,7 +901,7 @@ lively.BuildSpec('lively.wiki.VersionViewer', {
                 } catch (e) { show(e); date = 'Invalid date'; }
                 return {
                     isListItem: true,
-                    string: version.author + ' - ' + date + ' (' + version.change + ')',
+                    string: version.author + ' - ' + date + ' (' + version.version + ", " + version.change + ')',
                     value: version
                 }
             });

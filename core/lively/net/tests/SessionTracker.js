@@ -3,15 +3,16 @@ module('lively.net.tests.SessionTracker').requires('lively.TestFramework', 'live
 AsyncTestCase.subclass('lively.net.tests.SessionTracker.Register',
 'running', {
 
-    setUp: function($super) {
-        $super();
+    setUp: function() {
         this.setMaxWaitDelay(20*1000);
         this.serverURL = URL.create(Config.nodeJSURL+'/SessionTrackerUnitTest/');
+        lively.net.SessionTracker.removeSessionTrackerServer(this.serverURL)
         lively.net.SessionTracker.createSessionTrackerServer(this.serverURL, {inactiveSessionRemovalTime: 1*500});
         this.sut = new lively.net.SessionTrackerConnection({
             sessionTrackerURL: this.serverURL,
             username: 'SessionTrackerTestUser'
         });
+        lively.Config.set('lively2livelyAllowRemoteEval', true);
     },
 
     tearDown: function($super) {
@@ -111,17 +112,20 @@ AsyncTestCase.subclass('lively.net.tests.SessionTracker.Register',
     },
 
     testRemoteEval: function() {
+        var result;
         this.sut.register();
         this.sut.openForRequests();
         Global.remoteEvalHappened = false;
         var expr = 'Global.remoteEvalHappened = true; 1 + 3';
-        this.sut.remoteEval(this.sut.sessionId, expr, function(result) {
+        this.sut.remoteEval(this.sut.sessionId, expr, function(_result) { result = _result; });
+        this.waitFor(function() { return !!result; }, 10, function() {
             this.assertMatches({data: {result: '4'}}, result);
             this.assert(Global.remoteEvalHappened, 'remoteEvalHappened no set');
             delete Global.remoteEvalHappened;
             this.done();
-        }.bind(this));
+        })
     },
+
     testCopy: function() {
         this.sut.register();
         this.sut.openForRequests();
@@ -219,6 +223,21 @@ AsyncTestCase.subclass('lively.net.tests.SessionTracker.Register',
             var user =  sessions[this.sut.trackerId][this.sut.sessionId].user;
             this.assertEquals('foobar', user)
             this.done();
+        });
+    },
+
+    testCallbacksAreCleared: function() {
+        this.sut.register();
+        this.sut.openForRequests();
+        var expr = '1 + 3';
+        var result;
+        this.sut.remoteEval(this.sut.sessionId, expr, function(_result) { result = _result; });
+        this.waitFor(function() { return !!result; }, 20, function() {
+          this.delay(function() {
+            this.assertMatches({data: {result: '4'}}, result);
+            this.assertEquals(0, Object.keys(this.sut.getWebSocket().callbacks).length);
+            this.done();
+          });
         });
     }
 });

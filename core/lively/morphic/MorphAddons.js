@@ -1,4 +1,4 @@
-module('lively.morphic.MorphAddons').requires('lively.morphic.Core', 'lively.morphic.Events', 'lively.morphic.Widgets', 'lively.morphic.Styles').toRun(function() {
+module('lively.morphic.MorphAddons').requires('lively.morphic.Core', 'lively.morphic.Events', 'lively.morphic.Widgets', 'lively.morphic.Styles', 'lively.morphic.TextCore').toRun(function() {
 
 /*
  * Extends the default morphic interface with convenience methods, methods that
@@ -8,11 +8,26 @@ module('lively.morphic.MorphAddons').requires('lively.morphic.Core', 'lively.mor
 
 Object.extend(lively.morphic, {
 
+    showMarkerFor: function(morph) {
+      if (!morph) return;
+      var m = lively._showMarker || (lively._showMarker = $world.loadPartItem("Marker", "PartsBin/Basic"));
+      m.setOpacity(1);
+      m.openInWorld();
+      m.setBounds(morph.globalBounds().expandBy(6));
+      m.applyStyle({borderWidth: 4, borderRadius: 10});
+      (function() {
+        m.setOpacityAnimated(0, 1000, function() { m.remove(); })
+      }).delay(1);
+    },
+
     show: function(obj) {
 
         function showText(text) {
-          $world.setStatusMessage(text, Color.gray);
-          return text;
+            if (typeof $world != 'undefined')
+                $world.setStatusMessage(text, Color.gray);
+            else
+                console.log('show: ' + text);
+            return text;
         }
 
         function newShowPt(/*pos or x,y, duration, extent*/) {
@@ -41,41 +56,8 @@ Object.extend(lively.morphic, {
         }
 
         function newShowRect(r, duration) {
-            // creates a marker that looks like:
-            //
-            // xxxx     xxxx
-            // x           x
-            // x           x
-
-            // x           x
-            // x           x
-            // xxxx     xxxx
-            function createMarkerMorph(bounds) {
-                var b = new lively.morphic.Morph();
-                b.isEpiMorph = true;
-                b.setBounds(bounds);
-                b.applyStyle({fill: null, borderWidth: 2, borderColor: Color.red})
-                b.ignoreEvents();
-                b.setZIndex(1);
-                return b;
-            }
-            function createMarkerForCorners() {
-                r = r.insetBy(-2);
-                var length = Math.min(r.width, r.height),
-                    markerLength = Math.max(4, Math.floor((length/10) < 10 ? (length / 2) - 5 : length / 10)),
-                    boundsForMarkers = [
-                        r.topLeft().     addXY(0,0).               extent(pt(markerLength, 0)),
-                        r.topLeft().     addXY(0,2).               extent(pt(0, markerLength)),
-                        r.topRight().    addXY(-markerLength, 0).  extent(pt(markerLength, 0)),
-                        r.topRight().    addXY(-4,2).              extent(pt(0, markerLength)),
-                        r.bottomRight(). addXY(-4, -markerLength). extent(pt(0, markerLength)),
-                        r.bottomRight(). addXY(-markerLength, -2). extent(pt(markerLength, 0)),
-                        r.bottomLeft().  addXY(0,-2).              extent(pt(markerLength, 0)),
-                        r.bottomLeft().  addXY(0, -markerLength).  extent(pt(0, markerLength))],
-                    markers = boundsForMarkers.map(createMarkerMorph);
-                return markers;
-            }
-            return newShowThenHide(createMarkerForCorners(), duration);
+          var marker = lively.morphic.BoundsMarker.highlightBounds(r);
+          return newShowThenHide(marker, duration);
         }
 
         function newShowMorph (morph) {
@@ -141,16 +123,46 @@ Object.extend(lively.morphic, {
             return lively.morphic.World.current().openInspectorFor(obj);
     },
 
-    edit: function(obj) {
-        if (Global.lively && lively.morphic && lively.morphic.World.current())
-            lively.morphic.World.current().openObjectEditorFor(obj);
+    edit: function(/*obj, method, ...*/) {
+      var world = Global.lively && lively.morphic && lively.morphic.World.current();
+      if (world) world.openObjectEditorFor.apply(world, arguments);
+    },
+
+    printCallStack: function() {
+        var stack = 'no stack';
+        try { throw new Error() } catch(e) { if (e.stack) stack = e.stack }
+        return stack;
     },
 
     showCallStack: function() {
-        var stack = 'no stack';
-        try { throw new Error() } catch(e) { if (e.stack) stack = e.stack }
-        lively.morphic.alert(stack);
+        lively.morphic.alert(lively.morphic.printCallStack());
     },
+
+    printInspect: (function() {
+      var maxColLength = 300;
+      function inspectPrinter(val, ignore) {
+        if (!val) return ignore;
+        if (val.isMorph) return String(val);
+        var length = val.length || val.byteLength;
+        if (Global.ImageData && val instanceof Global.ImageData) return String(val);
+        if (length !== undefined && length > maxColLength && val.slice) {
+          var printed = typeof val === "string" || val.byteLength ? String(val.slice(0, maxColLength)) : val.slice(0,maxColLength).map(lively.lang.string.print);
+          return "[" + printed + ",...]";
+        }
+        return ignore;
+      }
+
+      return function(obj, maxDepth) {
+        if (!obj) return String(obj);
+        if (typeof obj === "string") return obj.length > maxColLength ? (obj.slice(0,maxColLength) + "...") : String(obj);
+        if (!Object.isObject(obj)) return String(obj);
+        return lively.lang.obj.inspect(obj, {
+          customPrinter: inspectPrinter,
+          maxDepth: maxDepth,
+          printFunctionSource: true
+        });
+      }
+    })(),
 
     newMorph: function(options) {
         // for interactive usage
@@ -171,13 +183,16 @@ Object.extend(lively.morphic, {
 });
 
 Object.extend(lively, {
+    showMarkerFor:     lively.morphic.showMarkerFor,
     show:     lively.morphic.show,
     log:      lively.morphic.log,
-    newMorph: lively.morphic.newMorph
+    newMorph: lively.morphic.newMorph,
+    printInspect: lively.morphic.printInspect
 });
 
 Object.extend(Global, {
     show:     lively.morphic.show,
+    showMarkerFor:     lively.morphic.showMarkerFor,
     alertDbg: lively.morphic.alertDbg,
     alert:    lively.morphic.alert,
     alertOK:  lively.morphic.alertOK,
@@ -187,22 +202,8 @@ Object.extend(Global, {
 });
 
 lively.morphic.Morph.addMethods(
-'geometry', {
-    moveBy: function(point) { this.setPosition(this.getPosition().addPt(point)); },
-    translateBy: function(p) { this.setPosition(this.getPosition().addPt(p)); return this; },
-    align: function (p1, p2) { return this.translateBy(p2.subPt(p1)); },
-    centerAt: function (p) { return this.align(this.bounds().center(), p); },
-    rotateBy: function(delta) { this.setRotation(this.getRotation() + delta); return this; },
-    scaleBy: function(factor) { this.setScale(this.getScale()*factor); },
-    centerAt: function(p) { return this.align(this.bounds().center(), p); },
-    resizeBy: function(point) { this.setExtent(this.getExtent().addPt(point)); }
-},
 'morphic relationship', {
-    addMorphBack: function(other) {
-        var next = other === this.submorphs[0] ? this.submorphs[1] : this.submorphs[0];
-        return this.addMorph(other, next);
-    },
-    addMorphFront: function(other) { return this.addMorph(other); },
+
     bringToFront: function() {
         // Hack: remove and re-add morph
         var owner = this.owner;
@@ -229,6 +230,7 @@ lively.morphic.Morph.addMethods(
         items = items.concat(this.submorphs.invoke('indentedListItemsOfMorphNames', indent).flatten());
         return items;
     },
+
     treeItemsOfMorphNames: function (options) {
         var scripts = options["scripts"] || [],
             properties = options["properties"] || {},
@@ -237,33 +239,11 @@ lively.morphic.Morph.addMethods(
         var item = {name: this.name || "a " + lively.Class.getConstructor(this).displayName, value: this},
             children = this.submorphs.invoke('treeItemsOfMorphNames', options).compact();
         if (children.length > 0) item.children = children;
-        Properties.own(properties).each(function (v) { item[v] = properties[v]; });
-        scripts.each(function (script) { Object.addScript(item, script); });
+        lively.lang.properties.own(properties).forEach(function (v) { item[v] = properties[v]; });
+        scripts.forEach(function (script) { Object.addScript(item, script); });
         return item;
-    },
+    }
 
-    isSubmorphOf: function(otherMorph) {
-        return otherMorph.withAllSubmorphsDetect(function(morph) {
-            return morph === this }, this);
-    },
-
-    topSubmorph: function() {
-        // the morph on top is the last one in the list
-        return this.submorphs.last();
-    },
-    ownerChain: function() {
-        var owners = [], morph = this;
-        while (morph.owner) {
-            owners.push(morph.owner)
-            morph = morph.owner;
-        }
-        return owners;
-    },
-},
-'convenience accessing', {
-    bounds: function() { return this.getBounds(); },
-    innerBounds: function() { return this.getShape().getBounds(); },
-    getCenter:  function () { return this.bounds().center(); }
 },
 'convenience scripting', {
     stepAndBounce: function () {  // convenience for scripting
@@ -304,10 +284,11 @@ lively.morphic.Morph.addMethods(
     },
 },
 'opening', {
-    openInWorld: function(pos, name) {
+
+    openInWorld: function(pos) {
         var world = lively.morphic.World.current();
         if (!world) {
-            lively.whenLoaded(this.openInWorld.bind(this,pos,name));
+            lively.whenLoaded(this.openInWorld.bind(this, pos));
             return;
         }
         if (world.currentScene) world = world.currentScene;
@@ -315,6 +296,7 @@ lively.morphic.Morph.addMethods(
         pos && this.setPosition(pos);
         return this;
     },
+
     openInWindow: function(optPosOrOptions) {
         var options = optPosOrOptions || {};
         if (options.x !== undefined && options.y !== undefined) options = {pos: options};
@@ -328,6 +310,7 @@ lively.morphic.Morph.addMethods(
         }
         return this.getWindow();
     },
+
     openInWorldCenter: function() {
         // redundant functionality as in openPartItem
         this.openInWorld();
@@ -336,10 +319,6 @@ lively.morphic.Morph.addMethods(
     }
 },
 'removing', {
-    removeAllMorphs: function() {
-        this.submorphs.clone().invoke('remove')
-    },
-
     removeAndDropSubmorphs: function() {
         // Removes the morph and lets all its child morphs drop to its owner
         var supermorph = this.owner || this.world(),
@@ -363,8 +342,113 @@ lively.morphic.Morph.addMethods(
         return this.grabbingEnabled || this.grabbingEnabled === undefined;
     }
 },
-'copying', {
-    duplicate: function() { return this.copy() }
+'undo', {
+
+    undoRedoTransformationChange: function(spec, undo) {
+        if (!undo || undo == 'undo') {
+            if (spec.startOrigin !== spec.endOrigin) {
+
+            }
+            // Change of owner due to grab/drop or remove
+            if (spec.startOwner !== spec.endOwner) {
+                if (spec.startOwner == null)
+                    this.remove();
+                else
+                    spec.startOwner.addMorph(this);
+            }
+            // Drag, rotate, scale
+            this.setTransform(spec.startTransform);
+            if (!spec.startExtent.eqPt(spec.endExtent)) {
+                this.setExtent(spec.startExtent.scaleBy(1/this.getScale()));
+            }
+        }
+        if (undo == 'redo') {
+            if (spec.startOrigin !== spec.endOrigin) {
+
+            }
+            // Change of owner due to grab/drop or remove
+            if (spec.startOwner !== spec.endOwner) {
+                spec.endOwner.addMorph(this);
+            }
+            // Drag, rotate, scale
+            this.setTransform(spec.endTransform);
+            if (!spec.startExtent.eqPt(spec.endExtent)) {
+                    this.setExtent(spec.endExtent.scaleBy(1/this.getScale()));
+            }
+        }
+    },
+
+    undoRedoStyleChange: function(spec, undo) {
+        var propName = spec.actionName;
+        if (!undo || undo == 'undo') {
+            this['set'+propName](spec['start'+propName]);
+        }
+        if (undo == 'redo') {
+            this['set'+propName](spec['end'+propName]);
+        }
+    },
+
+    logStyleForUndo: function(propName, phase) {
+        // See World.undoReadme
+        // Note: propName will be capitalized, as 'BorderWidth'
+        // Style changes for now are all continuous - we can't tell the first from others
+        // Therefore we look at the last undo item, and if it matches (morph and propName)
+        //    then we amend with new value for end<Prop>, else we log a new undo item
+        if ($world.undoQueue.length == 0
+            || $world.undoQueue.last().morph !== this
+            || $world.undoQueue.last().actionName != propName) {
+            // Log the starting state for style changes
+            var spec = {morph: this, actionName: propName, phase: 'before',
+                        undoFunctionName: 'undoRedoStyleChange'};
+            spec['start'+propName] = this['get'+propName]();
+            $world.logMorphicAction(spec);
+            return;
+        }
+
+        // Log the ending state for changing style parameters
+        var spec = {morph: this, actionName: propName, phase: 'after'};
+        spec['end'+propName] = this['get'+propName]();
+        $world.amendMorphicAction(spec);
+    },
+
+    logTransformationForUndo: function(actionName, phase, evt) {
+        // See World.undoReadme
+        // Note grab/drop involves change in both ownership and transformation
+        // Change of origin is handled separately
+        var transform = this.getTransform();
+        //in the case where morph gets moved by a mouse directly (without using the halo)
+        //we need to calculate the mouse offset to get the morph's true start origin
+        //and then adjust the difference in both the startOrigin, and startTransform.
+        if(evt && evt.hand && evt.hand.eventStartPos && 
+            ! (evt.getTargetMorph() instanceof lively.morphic.GrabHalo )) {
+            var mouseOffsetX = evt.getPosition().x - evt.hand.eventStartPos.x;
+            var mouseOffsetY = evt.getPosition().y - evt.hand.eventStartPos.y;
+            transform.e -= mouseOffsetX;
+            transform.f -= mouseOffsetY;
+        }
+        var org = transform.transformPoint(this.getOrigin());
+        if (phase == null || phase == 'start') {
+            // Log the starting state for, eg, grab, drag, etc.
+            $world.logMorphicAction({
+                morph: this, actionName: actionName, phase: phase,
+                undoFunctionName: 'undoRedoTransformationChange',
+                startTransform: transform, startExtent: this.getBounds().extent(),
+                startOwner: this.owner,
+                startIndexInSubmorphs: this.owner ? this.owner.submorphs.indexOf(this) : null,
+                startOrigin: org
+            });
+            return;
+        }
+        // Log the ending state for, eg, grab, drag, etc.
+        var amendments = {
+            morph: this, actionName: actionName, phase: phase,
+            endTransform: this.getTransform(), endExtent: this.getBounds().extent(),
+            endOwner: this.owner, endOrigin: org
+        };
+
+        if (this.owner) amendments.endIndexInSubmorphs = this.owner.submorphs.indexOf(this)
+            $world.amendMorphicAction(amendments);
+    }
 },
 'styling', {
 
@@ -441,6 +525,18 @@ lively.morphic.Morph.addMethods(
     }
 
 },
+"layouting helpers", {
+  
+  fitToSubmorphs: function() {
+    if (!this.submorphs.length) return;
+    var subBounds = this.submorphBounds(new lively.morphic.Similitude()),
+        l = this.getLayouter(),
+        offset = l ? l.getBorderSize() : 0;
+    this.setExtent(subBounds.bottomRight().addXY(offset, offset));
+  }
+
+},
+
 'update & change', {
     layoutChanged: function() {},
     changed: function() {}
@@ -518,7 +614,7 @@ lively.morphic.Morph.addMethods(
         this.cachedBounds = null;
         return this.morphicSetter('FixedPosition', bool);
     },
-    hasFixedPosition: function(bool) {
+    hasFixedPosition: function() {
         return this.morphicGetter('FixedPosition') || false;
     },
     setFixed: function(optFixed) {
@@ -591,6 +687,11 @@ lively.morphic.Morph.addMethods(
 'interaction', {
     show: function() { lively.morphic.show(this) },
     edit: function() { lively.morphic.edit(this) }
+},
+"ui messaging", {
+  addStatusMessageTrait: function() {
+    Trait('lively.morphic.SetStatusMessageTrait').applyToObject(this);
+  }
 });
 
 lively.morphic.Morph.addMethods(
@@ -607,7 +708,7 @@ lively.morphic.Morph.addMethods(
     removeOverlay: function() {
         if (this.overlay) this.overlay.remove();
     },
-})
+});
 
 Object.extend(lively.morphic.Morph, {
     makeRectangle: function (/**/) {
@@ -680,7 +781,8 @@ Object.extend(lively.morphic.Morph, {
             return new Rectangle(b.x - lineWidth, b.y - lineWidth, b.width + 2 * lineWidth, b.height + 2 * lineWidth)
         }
         return bezierCurve;
-    }});
+    }
+});
 
 lively.Line.addMethods(
 'conversion', {
@@ -839,7 +941,7 @@ lively.morphic.World.addMethods(
         textMsg.beLabel(Object.merge([{
             fixedWidth: true, fixedHeight: true,
             resizeWidth: true, resizeHeight: true,
-            allowInput: false,
+            allowInput: false, selectable: false,
             clipMode: 'visible', whiteSpaceHandling: 'pre'
         }, (options.textStyle || {})]));
 
@@ -886,7 +988,7 @@ lively.morphic.World.addMethods(
             this.stayOpen = true;
             world.statusMessages.remove(this);
             var self = this, text = this.get('messageText');
-            text.applyStyle({allowInput: true, fixedWidth: false });
+            text.applyStyle({allowInput: true, fixedWidth: false, selectable: true});
             text.fit();
             (function() {
                 var ext = text.getTextExtent().addXY(20,20),
@@ -921,6 +1023,89 @@ lively.morphic.World.addMethods(
         return this.addStatusMessageMorph(this.addProgressBar(null, label));
     }
 
+},
+'undo', {
+    undoQueue: [],
+    undoRedoPointer: -1,
+    enableMorphicUndo: function() {
+        // See undoReadme
+        // non-null queue means logging is enabled
+        this.undoQueue = [];
+        this.undoRedoPointer = -1;
+    },
+    logMorphicAction: function(actionSpec) {
+        // See undoReadme
+        // enter a new action spec in the queue
+        if (!this.undoQueue) return;  // undo not enabled
+
+        var numUndone = (this.undoQueue.length - 1) - this.undoRedoPointer;
+        if (numUndone > 0) {
+            for (var i=0; i<numUndone; i++) {
+                this.undoQueue.pop();  // shorten queue to last undo/redo point
+            }
+        }
+
+        var maxQueueLength = 20;
+        if (this.undoQueue.length > maxQueueLength) {
+            this.undoQueue.splice(0, 2);
+        }
+        this.undoQueue.push(actionSpec)
+        this.undoRedoPointer = this.undoQueue.length - 1;  // reset pointer to latest action
+        return;
+    },
+    undoLastAction: function(actionSpec) {
+        // undo the most recent action
+        //  or before the last undo or after the last redo
+        if (!this.undoQueue) return;  // undo not enabled
+
+        if (this.undoRedoPointer < 0) return;  // queue is  empty
+        var action = this.undoQueue[this.undoRedoPointer]
+        if (action.phase && action.phase == 'start') {
+            console.log("Undo action still has phase = 'start'")
+        }
+        action.morph[action.undoFunctionName](action, 'undo');
+        this.undoRedoPointer--
+    },
+    redoNextAction: function() {
+        // redo the most recent undone action or that after the last redo
+        if (!this.undoQueue) return;  // undo not enabled
+
+        if (this.undoRedoPointer+1 > this.undoQueue.length-1) return;  // queue is  empty
+        var action = this.undoQueue[this.undoRedoPointer+1]
+        if (action.phase && action.phase == 'start') {
+            console.log("Last undo action still has phase = 'start'")
+        }
+        action.morph[action.undoFunctionName](action, 'redo');
+        this.undoRedoPointer++
+    },
+    getUndoQueue: function() {
+        return this.undoQueue;
+    },
+    amendMorphicAction: function(amendment) {
+        // See undoReadme
+        // amend the last spec in undoQueue with updated values
+        // note the amendment's morph and actionName must match that of the original spec
+        if (!this.undoQueue || this.undoQueue.length == 0) return;
+        var lastAction = this.undoQueue.last();
+        if (lastAction.morph !== amendment.morph || lastAction.actionName !== amendment.actionName) {
+            console.log('Unmatching log of state for ' + amendment.actionName + ' ' + amendment.phase);
+            // Maybe we should do more - like check if lastAction phase was start
+            // meaning it needs more, so we should take it off the queue since incomplete
+            return
+        }
+        for (p in amendment) { lastAction[p] = amendment[p] };
+    },
+    undoReadme: function() {
+        // NOTE:  Simple undo records should be logged with null phase = 'start/end'
+        // start/end actions (like button down/up) should be logged with, eg, 'start', 'end'
+        // continuous actions (like slider) should be logged with, eg, 'more', 'more', 'more', ...
+        // What really matters is that 'start/end', 'start', or the first 'more' with a given
+        //      caption will *log* a new undo record, andything else will *amend*
+    },
+    disableMorphicUndo: function() {
+        // Null queue means no logging
+        this.undoQueue = null;
+    }
 },
 'preferences', {
 
@@ -991,6 +1176,7 @@ lively.morphic.World.addMethods(
     },
 
     setCurrentUser: function(username) {
+        if (!username) username = "unknown_user";
         this.currentUser = username;
         lively.Config.set('UserName', username);
         lively.require('lively.net.SessionTracker').toRun(function() {
@@ -1000,14 +1186,27 @@ lively.morphic.World.addMethods(
         });
     },
 
-    getUserName: function(noninteractive) {
-        var userName = lively.Config.get('UserName')
-        if (userName && userName !== 'undefined') return userName;
-        if (!noninteractive) userName = this.askForUserName();
+    getUserName: function(noninteractive, thenDo) {
+        // 1. Try to retrieve the current user
+        var userName = lively.Config.get('UserName');
         if (userName && userName !== 'undefined') {
-            lively.Config.set('UserName', userName);
-            return userName;
+          thenDo && thenDo(null, userName);
+          return userName;
         }
+
+        // 2. If we have no current user but are allowed to ask, we do that
+        if (!noninteractive) {
+          this.askForUserName(undefined, function(username) {
+            if (userName && String(userName) !== 'undefined') {
+              lively.Config.set('UserName', userName);
+            }
+            thenDo && thenDo(null, userName || null);
+          });
+          return null;
+        }
+
+        // Otherwise we give up...
+        thenDo && thenDo(null, null);
         return null;
     },
 
@@ -1037,10 +1236,32 @@ lively.morphic.World.addMethods(
     },
 
     showUserConfig: function() {
-        var url = this.ensureUserConfig();
+      var self = this;
+      var user  = self.getUserName(true);
+      if (user === "null") user = null;
+      
+      lively.lang.fun.composeAsync(
+        user ? function(n) { n(null, user); } : function(n) {
+          $world.askForUserName("No username set yet, please enter your username:", function(input) {
+            n(null, input);
+          });
+        },
+        function(username, n) {
+          if (!username) return n(new Error("Not a valid username: " + username));
+          $world.setCurrentUser(username);
+          n();
+        },
+        showIt
+      )(function(err) {
+        if (err) $world.inform("Could not browser user config because:\n" + err);
+      });
+      
+      function showIt(n) {
+        var url = self.ensureUserConfig();
         url && require('lively.ide').toRun(function() {
             lively.ide.browse(url);
         });
+      }
     }
 
 },
@@ -1078,12 +1299,9 @@ lively.morphic.World.addMethods(
     }
 });
 
-lively.morphic.HandMorph.addMethods(
-'focus', {
-    setKeyboardFocus: function() {},
-});
-
 // really necessary to have this class?
+// 2015-11-26 rk: no, it is deprecated and only still exists to allow for
+// backwards compatibility with old widgets/apps. Will be removed in the future
 lively.morphic.Box.subclass('lively.morphic.Panel',
 'settings', {
     style: {
@@ -1252,8 +1470,16 @@ Object.extend(lively.morphic.Panel, {
 
 Object.extend(Global, {
     // deprecated interface!
-    newTextPane: lively.morphic.Panel.prototype.newTextPane,
-    newDragnDropListPane: lively.morphic.Panel.prototype.newDragnDropListPane
+    newTextPane:          lively.morphic.Panel.prototype.newTextPane,
+    newDragnDropListPane: lively.morphic.Panel.prototype.newDragnDropListPane,
+    show:                 lively.morphic.show,
+    showMarkerFor:        lively.morphic.showMarkerFor,
+    alertDbg:             lively.morphic.alertDbg,
+    alert:                lively.morphic.alert,
+    alertOK:              lively.morphic.alertOK,
+    inspect:              lively.morphic.inspect,
+    edit:                 lively.morphic.edit,
+    log:                  lively.morphic.log
 });
 
 lively.morphic.Text.addMethods(
@@ -1333,13 +1559,19 @@ lively.morphic.Morph.addMethods(
 
     },
 
-
     moveByAnimated: function(delta, time, callback) {
-        this.withCSSTransitionDo(this.moveBy.curry(delta), time, callback);
+        if (delta.eqPt(pt(0,0))) callback && callback.call(this);
+        else this.withCSSTransitionDo(this.moveBy.curry(delta), time, callback);
+    },
+
+    alignAnimated: function(posA, posB, time, callback) {
+        if (posA.eqPt(posB)) callback && callback.call(this);
+        else this.withCSSTransitionDo(this.align.bind(this, posA, posB), time, callback);
     },
 
     setPositionAnimated: function(position, time, callback) {
-        this.withCSSTransitionDo(this.setPosition.curry(position), time, callback);
+        if (this.getPosition().eqPt(position)) callback && callback.call(this);
+        else this.withCSSTransitionDo(this.setPosition.curry(position), time, callback);
     },
 
     setOpacityAnimated: function(opacity, time, callback) {
@@ -1347,11 +1579,13 @@ lively.morphic.Morph.addMethods(
     },
 
     setScaleAnimated: function(scale, time, callback) {
-        this.withCSSTransitionDo(this.setScale.curry(scale), time, callback);
+        if (this.getScale() == scale) callback && callback.call(this);
+        else this.withCSSTransitionDo(this.setScale.curry(scale), time, callback);
     },
 
     setExtentAnimated: function(extent, time, callback) {
-        this.withCSSTransitionDo(this.setExtent.curry(extent), time, callback);
+        if (this.getExtent().eqPt(extent)) callback && callback.call(this);
+        else this.withCSSTransitionDo(this.setExtent.curry(extent), time, callback);
     }
 });
 
@@ -1520,6 +1754,326 @@ Trait('lively.morphic.FixedPositioning.MorphTrait', {
         if (this.hasFixedPosition()) this.disableFixedPositioning();
         return this.constructor.prototype.remove.call(this);
     }
+});
+
+lively.morphic.Text.subclass("lively.morphic.StatusMessage",
+"properties", {
+
+  style: {
+    fontFamily: 'Monaco,monospace',
+    padding: lively.Rectangle.inset(4, 2, 8, 2),
+    borderWidth: 0, borderRadius: 6,
+    fontSize: 10,
+    allowInput: false, selectable: true,
+    clipMode: "auto", whiteSpaceHandling: 'pre'
+  },
+
+  isEpiMorph: true
+
+},
+"initializing", {
+
+  initialize: function($super, bounds) {
+    $super(bounds, "");
+    this.createCloseButton();
+    // should "internal" changes in the morph we are showing the message for
+    // (like cursor changes in a text morph) make this message morph disappear?
+    this.enableRemoveOnTargetMorphChange();
+  },
+
+  enableRemoveOnTargetMorphChange: function() {
+    this.removeOnTargetMorphChange = true;
+  },
+  
+  disableRemoveOnTargetMorphChange: function() {
+    this.removeOnTargetMorphChange = false;
+  },
+
+  createCloseButton: function() {
+      var closeBtn = new lively.morphic.Button(lively.rect(0,0,18,18), "X");
+      closeBtn.name = "closeButton";
+      lively.bindings.connect(closeBtn, 'fire', this, 'remove');
+      this.addMorph(closeBtn);
+      closeBtn.addScript(function onMouseMove(evt) { this.focus(); });
+      closeBtn.addScript(function alignInOwner() {
+        var offset = this.owner.showsVerticalScrollBar() ? this.owner.getScrollBarExtent().x + 3 : 2;
+        this.align(this.bounds().topRight(), this.owner.innerBounds().topRight().addXY(-offset,2));
+      });
+      closeBtn.alignInOwner();
+  }
+
+},
+"message interface", {
+
+    setMessage: function(forMorph, msg, color) {
+      // setting 'da message
+      this.lastUpdated = Date.now();
+      this.setVisible(false); // to avoid flickering
+      $world.addMorph(this);
+
+      var color = color || Global.Color.white,
+          fill = (color === Global.Color.green
+               || color === Global.Color.red
+               || color === Global.Color.black) ?
+            Global.Color.white :
+            Global.Color.black.lighter();
+
+      this.applyStyle({
+        textColor: color,
+        fill: fill,
+        fixedHeight: false, fixedWidth: false,
+        clipMode: 'visible'
+      });
+
+      if (!Array.isArray(msg)) {
+        msg = [
+          ['expand', {color: color, doit: {code: "evt.getTargetMorph().expand();"}}],
+          ['\n'],
+          [String(msg)]
+        ]
+      }
+
+      this.setRichTextMarkup(msg);
+    },
+
+    ensureOpenFor: function(morph) {
+      if (this.owner) return;
+      this.openInWorld();
+      this.alignAtBottomOf(morph);
+    },
+
+    expand: function(insertionMorph, textMode) {
+      var ctx = lively.PropertyPath("textChunks.0.style.doit.context").get(this);
+      var content = (ctx && ctx.content) || this.insertion || this.textString.replace(/^expand\n?/, "");
+      delete this.insertion;
+
+      if (insertionMorph && insertionMorph.isCodeEditor) {
+        insertionMorph.withAceDo(function(ed) {
+          if (!ed.selection.isEmpty()) ed.selection.clearSelection();
+          ed.insert(content);
+        });
+      } else {
+        $world.addCodeEditor({
+          title: content.slice(0,60).replace(/\n/g, " "),
+          extent: pt(600, 300),
+          content: content,
+          textMode: textMode ? textMode : "text",
+          lineWrapping: true
+        }).getWindow().comeForward();
+      }
+    }
+
+},
+"events", {
+
+  onMouseMove: function(evt) {
+    var closeBtn = this.get("closeButton");
+    if (closeBtn.innerBoundsContainsWorldPoint(evt.getPosition())) {
+      closeBtn.bringToFront();
+      closeBtn.focus();
+    }
+  }
+
+},
+"layouting", {
+
+  alignAtBottomOf: function(forMorph) {
+    if (!this.owner) return;
+    var world = this.world();
+    if (!world) return;
+
+    var ext = forMorph.getExtent(),
+        maxX = ext.x,
+        maxY = Math.max(40, Math.min(ext.y-100, 250));
+
+    this.applyStyle({fixedHeight: false});
+    // this.fit();
+    this.setTextExtent(pt(maxX, 10));
+    this.fitThenDo(function() {
+      this.setVisible(true);
+      this.bringToFront();
+      this.setPosition(forMorph.owner.worldPoint(forMorph.bounds().bottomLeft()));
+      var visibleBounds = world.visibleBounds(),
+          bounds = this.bounds(),
+          height = Math.min(bounds.height+3, maxY),
+          overlapY = bounds.top() + height - visibleBounds.bottom();
+      if (overlapY > 0) this.moveBy(pt(0, -overlapY));
+      this.applyStyle({
+        fixedHeight: true, fixedWidth: true,
+        clipMode: {x: 'hidden', y: 'auto'}
+      });
+      this.setExtent(pt(maxX, height));
+      var cb = this.get("closeButton");
+      if (cb) cb.alignInOwner();
+    });
+
+  }
+},
+"removal", {
+
+  onOwnerChanged: function($super, owner) {
+    $super(owner);
+  },
+
+  maybeRemoveAfter: function(delay) {
+    var self = this;
+    if (self._removeTimer) clearTimeout(self._removeTimer);
+    if (typeof delay === "number") {
+      self._removeTimer = setTimeout(function() {
+        self.owner && self.owner.removeStatusMessage();
+      }, 1000*delay);
+    }
+  }
+
+});
+
+Trait('lively.morphic.SetStatusMessageTrait', {
+
+  ensureStatusMessageMorph: function() {
+    return this._statusMorph ?
+      this._statusMorph :
+      this._statusMorph = new lively.morphic.StatusMessage(
+        this.getExtent().withY(80).extentAsRectangle());
+  },
+
+  removeStatusMessage: function() {
+    if (this._statusMorph
+     && this._statusMorph.isVisible()
+     && this._statusMorph.owner)
+       this._statusMorph.remove();
+  },
+
+  hideStatusMessage: function () {
+    this.removeStatusMessage();
+  },
+
+  setStatusMessage: function(msg, color, delay) {
+    var world = this.world();
+    if (!world) return;
+    var self = this,
+        sm = this._statusMorph || this.ensureStatusMessageMorph();
+
+    sm.setMessage(this, msg, color);
+    sm.alignAtBottomOf(this);
+
+    (function() {
+      sm.maybeRemoveAfter(delay);
+
+      // FIXME how to modularize this?
+      if (self && self.isCodeEditor) {
+        // either remove via timeout or when curs/selection changes occur. Note
+        // that via onOwnerChanged the statusMorph also is removed when the
+        // editors owner is null
+        self.withAceDo(function(ed) {
+          if (ed._livelyStatusMessageRemoverInstalled) return;
+          ed._livelyStatusMessageRemoverInstalled = true;
+          ed.on("changeSelection", function() {
+            if (Date.now() - sm.lastUpdated < 50) return;
+            if (!sm.removeOnTargetMorphChange) return;
+            self.removeStatusMessage();
+          });
+        });
+      }
+
+    }).delay(0);
+  },
+
+  showError: function (e, offset) {
+      this.setStatusMessage(String(e), Color.red);
+      if (e.stack) this._statusMorph.insertion = e.stack;
+  }
+
+});
+
+lively.morphic.Box.subclass("lively.morphic.BoundsMarker",
+"initializing", {
+
+  isEpiMorph: true,
+  style: {zIndex: 1, borderWidth: 0, fill: null},
+
+  initialize: function($super, optStyle) {
+    // creates a marker that looks like:
+    //
+    // xxxx     xxxx
+    // x           x
+    // x           x
+    // 
+    // x           x
+    // x           x
+    // xxxx     xxxx
+    $super(rect(0,0,10,10));
+    this.ignoreEvents();
+    this.markerStyle = lively.lang.obj.merge(
+      {fill: null, borderWidth: 2, borderColor: Color.red},
+      optStyle);
+  },
+
+  markerLength: function(forBounds) {
+    forBounds = forBounds.insetBy(-2);
+    var length = Math.min(forBounds.width, forBounds.height);
+    return Math.max(4, Math.floor((length/10) < 10 ? (length / 2) - 5 : length / 10));
+  },
+
+  createMarkerEdge: function() {
+      var b = new lively.morphic.Morph();
+      b.isEpiMorph = true;
+      b.ignoreEvents();
+      b.applyStyle(this.markerStyle);
+      return b;
+  },
+
+  ensureMarkerCorners: function() {
+    var topLeftH     = this.topLeftH     || (this.topLeftH     = this.addMorph(this.createMarkerEdge())),
+        topLeftV     = this.topLeftV     || (this.topLeftV     = this.addMorph(this.createMarkerEdge())),
+        topRightH    = this.topRightH    || (this.topRightH    = this.addMorph(this.createMarkerEdge())),
+        topRightV    = this.topRightV    || (this.topRightV    = this.addMorph(this.createMarkerEdge())),
+        bottomRightH = this.bottomRightH || (this.bottomRightH = this.addMorph(this.createMarkerEdge())),
+        bottomRightV = this.bottomRightV || (this.bottomRightV = this.addMorph(this.createMarkerEdge())),
+        bottomLeftH  = this.bottomLeftH  || (this.bottomLeftH  = this.addMorph(this.createMarkerEdge())),
+        bottomLeftV  = this.bottomLeftV  || (this.bottomLeftV  = this.addMorph(this.createMarkerEdge()));
+    return [
+      topLeftH, topLeftV,
+      topRightH, topRightV,
+      bottomRightH, bottomRightV,
+      bottomLeftH, bottomLeftV];
+  },
+  
+  alignWithMorph: function(otherMorph) {
+    return this.alignWithRect(otherMorph.globalBounds());
+  },
+
+  alignWithRect: function(r) {
+    var corners = this.ensureMarkerCorners(),
+        markerLength = this.markerLength(r),
+        boundsForMarkers = [
+            r.topLeft().     addXY(0,0).               extent(pt(markerLength, 0)),
+            r.topLeft().     addXY(0,2).               extent(pt(0, markerLength)),
+            r.topRight().    addXY(-markerLength, 0).  extent(pt(markerLength, 0)),
+            r.topRight().    addXY(-4,2).              extent(pt(0, markerLength)),
+            r.bottomRight(). addXY(-4, -markerLength). extent(pt(0, markerLength)),
+            r.bottomRight(). addXY(-markerLength, -2). extent(pt(markerLength, 0)),
+            r.bottomLeft().  addXY(0,-2).              extent(pt(markerLength, 0)),
+            r.bottomLeft().  addXY(0, -markerLength).  extent(pt(0, markerLength))];
+    corners.forEach(function(corner, i) {
+      corner.setBounds(boundsForMarkers[i]);
+    });    
+    return this;
+  }
+
+});
+
+Object.extend(lively.morphic.BoundsMarker, {
+  
+  highlightMorph: function(morph) {
+    return new lively.morphic.BoundsMarker()
+      .openInWorld().alignWithMorph(morph);
+  },
+
+  highlightBounds: function(bounds) {
+    return new lively.morphic.BoundsMarker()
+      .openInWorld().alignWithRect(bounds);
+  }
+
 });
 
 }) // end of module

@@ -282,8 +282,46 @@ lively.BuildSpec('lively.ide.tools.DirViewer', {
                 connectionRebuilder: function connectionRebuilder() {
                 lively.bindings.connect(this, "selection", this.get("DirViewer"), "applySort", {});
             }
+            }, 
+            {
+                _Extent: lively.pt(20.0,18.0),
+                _Position: lively.pt(1,0),
+                className: "lively.morphic.Button",
+                label: "⟳",
+                name: "refreshButton",
+                connectionRebuilder: function connectionRebuilder() {
+                lively.bindings.connect(this, "fire", this.get("DirViewer"), "refreshContent", {});
+            }
             }, {
                 _Extent: lively.pt(50.0,18.0),
+                _Position: lively.pt(2,0),
+                className: "lively.morphic.Button",
+                label: "hiera",
+                name: "printDirHieraButton",
+                connectionRebuilder: function connectionRebuilder() {
+                lively.bindings.connect(this, "fire", this.get("DirViewer"), "printDirHierarchy", {});
+            }
+            }, {
+                _Extent: lively.pt(50.0,18.0),
+                _Position: lively.pt(2,0),
+                className: "lively.morphic.Button",
+                label: "add dir",
+                name: "addDirButton",
+                connectionRebuilder: function connectionRebuilder() {
+                lively.bindings.connect(this, "fire", this.get("DirViewer"), "createDirInteractively", {});
+            }
+            }, {
+                _Extent: lively.pt(50.0,18.0),
+                _Position: lively.pt(3,0),
+                className: "lively.morphic.Button",
+                label: "add file",
+                name: "addFileButton",
+                connectionRebuilder: function connectionRebuilder() {
+                lively.bindings.connect(this, "fire", this.get("DirViewer"), "createFileInteractively", {});
+            }
+            }, {
+                _Extent: lively.pt(50.0,18.0),
+                _Position: lively.pt(4,0),
                 className: "lively.morphic.Button",
                 label: "set cwd",
                 name: "setCwdButton",
@@ -291,22 +329,13 @@ lively.BuildSpec('lively.ide.tools.DirViewer', {
                 lively.bindings.connect(this, "fire", this.get("DirViewer"), "changeCwd", {});
             }
             }, {
-                _Extent: lively.pt(50.0,18.0),
-                _Position: lively.pt(1,0),
+                _Extent: lively.pt(60.0,18.0),
+                _Position: lively.pt(5,0),
                 className: "lively.morphic.Button",
-                label: "add dir",
-                name: "setCwdButton",
+                label: "download",
+                name: "downloadDirButton",
                 connectionRebuilder: function connectionRebuilder() {
-                lively.bindings.connect(this, "fire", this.get("DirViewer"), "createDirInteractively", {});
-            }
-            }, {
-                _Extent: lively.pt(50.0,18.0),
-                _Position: lively.pt(2,0),
-                className: "lively.morphic.Button",
-                label: "add file",
-                name: "setCwdButton",
-                connectionRebuilder: function connectionRebuilder() {
-                lively.bindings.connect(this, "fire", this.get("DirViewer"), "createFileInteractively", {});
+                lively.bindings.connect(this, "fire", this.get("DirViewer"), "downloadDir", {});
             }
             }]
         },{
@@ -678,9 +707,22 @@ lively.BuildSpec('lively.ide.tools.DirViewer', {
         $world.alertOK(d + '\nis now Lively\'s working directory');
         lively.ide.CommandLineInterface.setWorkingDirectory(d);
     },
+        downloadDir: function downloadDir() {
+          var path = this.dirState.path
+          var url = URL.nodejsBase.withFilename("DownloadDirServer/")
+            .withQuery({path: path});
+          window.open(url, "_blank");
+    },
         connectionRebuilder: function connectionRebuilder() {
         lively.bindings.connect(this, "lastFocused", this, "focusChanged", {});
     },
+
+        printDirHierarchy: function printDirHierarchy() {
+          lively.ide.commands.exec(
+            'lively.ide.CommandLineInterface.printDirectory',
+            {dir: this.dirState.path});
+        },
+
         createDirInteractively: function createDirInteractively() {
         var base = this.dirState.path,
             self = this;
@@ -732,6 +774,15 @@ lively.BuildSpec('lively.ide.tools.DirViewer', {
             lively.ide.openFile(fullPath)
         }
     },
+        refreshContent: function refreshContent() {
+        var list = this.get("fileList");
+        var index = list.selectedLineNo;
+        var scroll = list.getScroll()[0];
+        this.fetchAndDisplayDirContent(function() {
+          list.setScroll(0, scroll);
+          list.selectAt(index);
+        });
+      },
         fetchAndDisplayDirContent: function fetchAndDisplayDirContent(thenDo) {
         // this.fetchAndDisplayDirContent();
         var self = this;
@@ -752,7 +803,7 @@ lively.BuildSpec('lively.ide.tools.DirViewer', {
         };
         lively.ide.CommandLineSearch.findFiles('*',
             {cwd: this.dirState.path, excludes: '-false', depth: 1},
-            function(files) {
+            function(err, files) {
                 self.dirState.files = [parentDir].concat(files);
                 lively.bindings.connect(
                   self, 'dirContentUpdated',
@@ -810,15 +861,31 @@ lively.BuildSpec('lively.ide.tools.DirViewer', {
               if (fullPath.indexOf(dir) !== 0) $world.inform("Cannot browse " + fullPath + " because file is not accessible from the web");
               else window.open(fullPath.slice(dir.length))
             }
+        },
+        rename = {
+          description: 'rename',
+          exec: function() {
+            $world.prompt("rename " + item.path + " to:", function(input) {
+              if (!input) return;
+              lively.shell.run("mv " + fullPath + " " + j(dir, input), function(err, cmd) {
+                if (err) $world.inform("error renaming: " + err);
+                else $world.alertOK(fullPath + " -> " + j(dir, input));
+                self.fetchAndDisplayDirContent(function() {
+                  self.get("fileList").setSelectionMatching(new RegExp(" " + input + "$"));
+                });
+              });
+            }, {historyId: "lively.ide.DirViewer.rename", insput: item.path});
+          }
         };
     // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
     if (!item) return [];
     var self = this;
     var j = lively.ide.FileSystem.joinPaths;
+    var dir = this.dirState.path;
     var fullPath = j(this.dirState.path, item.path);
     return item.isDirectory ?
-      [copyPath, browse, remove] :
-      [copyPath, browse, remove, openInSCB, openInTextEditor];
+      [copyPath, browse, rename, remove] :
+      [copyPath, browse, rename, remove, openInSCB, openInTextEditor];
 },
     execItemAction: function execItemAction(item, n) {
     var action = this.getItemActionsFor(item)[n];
@@ -937,7 +1004,6 @@ lively.BuildSpec('lively.ide.tools.DirViewer', {
                 wasHandled = false;
             break;
         case 'Shift-^': this.gotoParentDir(); break;
-        case 'Shift-D': if (fileListFocused) this.deleteSelectedFileInteractively(); break;
         case 'Control-N': case 'Down': fl.selectNext(); break;
         case 'Control-P': case 'Up': fl.selectPrev(); break;
         case "Alt-V": case "PageUp": fl.scrollPage('up'); ensureSelectionIsInView('top'); break;
@@ -963,6 +1029,7 @@ lively.BuildSpec('lively.ide.tools.DirViewer', {
         case 'Alt-5': this.execItemAction(fl.selection, 4); break;
         case 'Alt-C': this.changeCwd(); break;
         case 'Alt-S': this.userQueryForSort(); break;
+        case 'Alt-P': this.printDirHierarchy(); break;
         default: wasHandled = false;
     }
 

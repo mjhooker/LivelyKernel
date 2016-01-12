@@ -1,5 +1,6 @@
 {
   "bootstrap": [
+    ["optimizedLoading", true, "Combine commonly used modules into one file and load that while bootstrapping instead of individual modules."],
     ["loadUserConfig", true, "For sth like jens/config.js, used in lively.bootstrap."],
     ["libsFile", "core/lib/lively-libs-debug.js", "Library code."],
 
@@ -10,7 +11,9 @@
       "node_modules/lively.lang/lib/events.js",
       "node_modules/lively.lang/lib/object.js",
       "node_modules/lively.lang/lib/collection.js",
+      "node_modules/lively.lang/lib/sequence.js",
       "node_modules/lively.lang/lib/tree.js",
+      "node_modules/lively.lang/lib/graph.js",
       "node_modules/lively.lang/lib/function.js",
       "node_modules/lively.lang/lib/string.js",
       "node_modules/lively.lang/lib/number.js",
@@ -41,7 +44,7 @@
       "doc": "Get the parsed cookie data",
       "get": {
           "type": "function",
-          "code": "function() { return typeof document !== 'undefined' && document.cookie ? document.cookie.split(';').invoke('split', '=').reduce(function(cookie, kv) { cookie[kv[0].trim()] = decodeURIComponent(kv[1]); return cookie; }, {}) : {}; }"
+          "code": "function() { return typeof document !== 'undefined' && document.cookie ? document.cookie.split(';').map(function(ea) { return ea.split('='); }).reduce(function(cookie, kv) { cookie[kv[0].trim()] = decodeURIComponent(kv[1]); return cookie; }, {}) : {}; }"
       },
       "set": {"type": "function", "code": "function() {}"}
     }
@@ -68,6 +71,22 @@
       },
       "set": {"type": "function", "code": "function() {} "}
     }
+  ],
+
+  "auth": [
+    ["userAuthEnabled", false, "Is user authentication enabled?"],
+    ["cookieField", "lvUserData_2013-10-12", "Cookie used for user data"],
+    ["usersFile", null, "File containing the authentication information and access rules"],
+    ["usersDefaultWorld", "/users/%USERNAME%/start.html", "Users' default world placed in their workspace"],
+    ["authPaths", {
+      "login": "/login",
+      "register": "/register",
+      "logout": "/logout",
+      "currentUser": "/current-user",
+      "checkPassword": "/check-password",
+      "userExists": "/user-exists",
+      "listUsers": "/list-users"
+    }, "Routes for user management, e.g. login, logout, registration"]
   ],
 
   "user": [
@@ -144,6 +163,19 @@
           "code": "function() { return Config.location.protocol + '//' + Config.location.host + '/nodejs'; }"
       },
       "set": {"type": "function", "code": "function() {}"}
+    },
+    {
+      "name": "nodeJSWebSocketURL",
+      "type": "String",
+      "doc": "Optional url to be used for websocket connections. By default the normal nodeJSURL will be used but under certain circumstances it can be blocked for websocket traffic. In this case you can set this aleernate url, e.g. to re-route to a certain port.",
+      "get": {
+          "type": "function",
+          "code": "function() { return Config._nodeJSWebSocketURL; }"
+      },
+      "set": {
+        "type": "function",
+        "code": "function(val) { Config._nodeJSWebSocketURL = val; var sessionTracker = typeof lively !== 'undefined' && lively.lang && lively.lang.Path('net.SessionTracker').get(lively); if (sessionTracker) { sessionTracker.localSessionTrackerURL = new URL(val.replace(/\\$/, '') + '/SessionTracker/'); if (lively.Config.get('lively2livelyAutoStart')) sessionTracker.resetSession(); } return val; }"
+      }
     }
   ],
 
@@ -154,7 +186,29 @@
     ["keepSerializerIds", false],
     ["createWorldPreview", true, "Whether to store an HTML document showing a static version of the serialized world."],
     ["manuallyCreateWorld", false, "Loads up Lively and creates a complete new world from scratch instead of using a serialized one."],
-    ["removeDOMContentBeforeWorldLoad", true, "Whether to remove all the DOM child nodes of the DOM element that is used to display the World."]
+    ["removeDOMContentBeforeWorldLoad", true, "Whether to remove all the DOM child nodes of the DOM element that is used to display the World."],
+    ["garbageCollectAttributeConnections", true, "Will remove connections and connected objects when connection targets in the object graph can only be reached through the connection itself. Can be disabled per connection using the garbageCollect: false option."],
+    ["checkWriteAuthorizationOfUsers", false, "Saving worlds and parts will use the user's credentials to check if saving is allowed and stuff."],
+    {
+      "name": "userPermissions",
+      "type": "Object",
+      "doc": "Map of special user permissions used when checkWriteAuthorizationOfUsers is on.",
+      "get": {
+          "type": "function",
+          "code": "function() { return this._userPermissions || {}; }"
+      },
+      "set": {"type": "function", "code": "function() {}"}
+    },
+    {
+      "name": "globalPermissions",
+      "type": "Object",
+      "doc": "Global resource permissions.",
+      "get": {
+          "type": "function",
+          "code": "function() { return lively.Config._globalPermissions || []; }"
+      },
+      "set": {"type": "function", "code": "function() {}"}
+    }
   ],
 
   "lively.Storage": [
@@ -188,7 +242,8 @@
     ["showWorldSave", true],
 
     ["gridSpacing", 10, "determins the pixels to snap to alt-dragging the drag halo"],
-    ["maxStatusMessages", 3, "Number of statusmessages that should appear at one time on the screen."]
+    ["maxStatusMessages", 3, "Number of statusmessages that should appear at one time on the screen."],
+    ["coloredHaloItems", false, "Halo Items can be made colorful for better recognition."]
   ],
 
   "lively.TestFramework": [
@@ -248,7 +303,9 @@
     ["hideSystemCursor", false],
     ["handleOnCapture", true],
     ["globalGrabbing", true],
-    ["touchBeMouse", false, "Dynamically determined."]
+    ["touchBeMouse", false, "Dynamically determined."],
+    ["usePointerevents", true, "Switch between native event handling and Googles Pointerevents library"],
+    ["useSingleHand", false, "Enforce the use of only one hand on mobile devices"]
   ],
 
   "lively.debugging": [
@@ -262,7 +319,16 @@
   "lively.morphic.Text": [
     ["useSoftTabs", true],
     ["useElasticTabs", false],
-    ["defaultTabSize", 4],
+    {
+      "name": "defaultTabSize",
+      "type": "Number",
+      "doc": "Tab width",
+      "get": {
+          "type": "function",
+          "code": "function() { return lively.Config.hasOwnProperty('_defaultTabSize') ? lively.Config._defaultTabSize : 2; }"
+      },
+      "set": {"type": "function", "code": "function(v) { lively.Config._defaultTabSize = v; module('lively.ide.CodeEditor').runWhenLoaded(function() { lively.morphic.CodeEditor.prototype.style.tabSize = v; lively.whenLoaded(function() { lively.ide.allCodeEditors().invoke('setTabSize', v); }); }); return v; }"}
+    },
     ["disableSyntaxHighlighting", false],
     ["textUndoEnabled", false, "Deprecated. Wether Lively takes care of undoing text changes or leaves it to the browser."]
   ],
@@ -279,6 +345,32 @@
     ["aceDefaultTextMode", "javascript", "Ace text mode to use"],
     ["aceDefaultLineWrapping", true, "Wrap lines in ace?"],
     ["aceDefaultShowGutter", true, "Enables the line number gutter"],
+    {
+      "name": "aceShowGutterInObjectEditor",
+      "type": "Boolean",
+      "doc": "Enables the line number gutter in Object Editor",
+      "get": {
+        "type": "function",
+        "code": "function() { return Config._aceShowGutterInObjectEditor || false; }"
+      },
+      "set": {
+        "type": "function",
+        "code": "function(val) { var spec, path = lively.PropertyPath('attributeStore.submorphs.0.attributeStore.submorphs.0.attributeStore._ShowGutter');\n Config._aceShowGutterInObjectEditor = val;\n if (lively && lively.BuildSpec && (spec = lively.BuildSpec('lively.ide.tools.ObjectEditor'))) {\n path.set(spec, val); } }"
+      }
+    },
+    {
+      "name": "aceShowGutterInWorkspace",
+      "type": "Boolean",
+      "doc": "Enables the line number gutter in Workspace",
+      "get": {
+        "type": "function",
+        "code": "function() { return Config._aceShowGutterInWorkspace || false; }"
+      },
+      "set": {
+        "type": "function",
+        "code": "function(val) { var spec, path = lively.PropertyPath('attributeStore.submorphs.1.attributeStore._ShowGutter');\n Config._aceShowGutterInWorkspace = val;\n if (lively && lively.BuildSpec && (spec = lively.BuildSpec('lively.ide.tools.JavaScriptWorkspace'))) {\n path.set(spec, val); } }"
+      }
+    },
     ["aceDefaultShowInvisibles", false, "Indicators for whitespace / non-print chars."],
     ["aceDefaultShowPrintMargin", false, "Show a vertical line at the print margin column."],
     ["aceDefaultShowIndents", true, "Indicators for indents in the beginning of lines."],
@@ -287,10 +379,27 @@
     ["aceDefaultShowWarnings", true, "Should autocompletion be enabled?"],
     ["aceDefaultShowErrors", true, "Show syntax errors in programming language mode?"],
     ["aceDefaultEnableAutocompletion", true, "Should autocompletion be enabled?"],
+    ["aceDefaultEnableBehaviors", true, "Should behaviors be enabled? (auto insert closing parens and quotation marks)"],
     ["computeCodeEditorCompletionsOnStartup", false, "when enabled all JS files udner core/ are read on startup nd their content is used to compute word completions"],
     ["showDoitErrorMessages", true, "When a doit eval results in an error a error message pops up."],
+    ["showDoitInMessageMorph", true, "Print eval results in message boxes of the code editor morph."],
     ["improvedJavaScriptEval", true, "Eval that changes semantics of how object literals and if statements are evaluated."],
-    ["showImprovedJavaScriptEvalErrors", false, "Visibly show errors when improved JavaScript eval transformation fail"]
+    ["showImprovedJavaScriptEvalErrors", false, "Visibly show errors when improved JavaScript eval transformation fail"],
+    ["aceDefaultUseIyGotoChar", true, "Quickly jump to next / prev characters using Cmd/Ctrl-, and Cmd/Ctrl-. "],
+    ["evalMarkersEnabled", true, "Eval markers are code selections that can be rerun by pressing a code. Useful for live development and quick testing."],
+    ["codeEditorMenuShowsSettings", true, "Include the settings menu item in the codeeditor context menu"],
+    ["draggableCodeInCodeEditor", false, "Based on AST, make code draggable"],
+    ["aceDefaultScrubbingEnabled", false, "Make number sin code editors scrubbable or not"],
+    {
+      "name": "useEmacsyKeys",
+      "type": "Boolean",
+      "doc": "Keybindings that resemble what you expect from an emacs.",
+      "get": {
+          "type": "function",
+          "code": "function() { return lively.LocalStorage.get('useEmacsyKeys') || false; }"
+      },
+      "set": {"type": "function", "code": "function(v) { lively.LocalStorage.set('useEmacsyKeys', v); require('lively.ide.CodeEditor').toRun(function() { lively.ide.CodeEditor.KeyboardShortcuts.reinitKeyBindingsForAllOpenEditors(); }); return v; }"}
+    }
   ],
 
   "lively.ide.Search": [
@@ -336,6 +445,10 @@
     ["propertyPreservation", null, "When saving a method (property) with a changed name, save the old behavior, or loose it. If not set (undefined), you are asked."]
   ],
 
+  "lively.ide.tools.SelectionNarrowing": [
+    ["selectionNarrowerInputLineAtTop", true, "Show the input line at top or bottom?"]
+  ],
+
   "askpass": [
     ["askpassSSLcaFile", "", ""],
     ["askpassSSLkeyFile", "", ""],
@@ -354,5 +467,34 @@
   "Changesets": [
     ["changesetsExperiment", false, "track changes and provide a UI for a changesets-based worlkflow"],
     ["automaticChangesReplay", true, "restore changes automatically on world load"]
+  ],
+
+  "lively.morphic.tools.MenuBar": [
+    ["showMenuBar", true, "Should a menu bar be opened on world load?"],
+    {
+      "name": "menuBarEntries",
+      "type": "Array",
+      "doc": "The actual menubar entries currently loaded",
+      "get": {
+          "type": "function",
+          "code": "function() { return lively.Config._menuBarEntries || (lively.Config._menuBarEntries = lively.Config.get('menuBarDefaultEntries')); }"
+      },
+      "set": {"type": "function", "code": "function(v) { lively.Config._menuBarEntries = v; module('lively.morphic.tools.MenuBar').runWhenLoaded(function() { lively.morphic.tools.MenuBar.openOnWorldLoad(); }); return v; }"}
+    },
+
+    ["menuBarDefaultEntries", [
+      "lively.net.tools.Lively2Lively",
+      "lively.morphic.tools.LivelyMenuBarEntry",
+      "lively.ide.tools.CurrentDirectoryMenuBarEntry",
+      "lively.morphic.tools.LogMenuBarEntry",
+      "lively.net.tools.Wiki",
+      "lively.ide.tools.JavaScriptToolsMenuBarEntries"
+      ], "Which menu bar entries to add by default? Specifies modules that should implement a getMenuBarEntries() method."]
+  ],
+
+  "lively.VM": [
+    ["useJsx", true, "jsx is a JS language extension for the react framework. When enabled code editors will know how to parse jsx."],
+    ["useBabelJsForEval", false, "babel.js is an ES6 / JSX transformer. When enabled will be used to transform evaled code."],
+    ["useBabelJsForScriptLoad", false, "babel.js is an ES6 / JSX transformer. When enabled will be used to transform evaled code."]
   ]
 }

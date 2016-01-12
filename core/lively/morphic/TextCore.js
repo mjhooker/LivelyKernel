@@ -51,6 +51,12 @@ Trait('TextChunkOwner',
                     return [rangeAndStyle[0][0],
                             rangeAndStyle[0][1],
                             rangeAndStyle[1]]})
+    },
+
+    getTextChunkAt: function(globalPos) {
+        return this.getTextChunks().detect(function(c) {
+          return c.bounds().containsPoint(globalPos);
+        });
     }
 
 },
@@ -400,13 +406,13 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
     getTextColor: function() { return this.morphicGetter('TextColor') || Color.black },
     setFontSize: function(size) { return this.morphicSetter('FontSize', size) },
     getFontSize: function() { return this.morphicGetter('FontSize') },
-    setFontFamily: function(fontName) { return this.morphicSetter('FontFamily', fontName) },
+    setFontFamily: function(fontName) { return this.morphicSetter('FontFamily', fontName); },
     getFontFamily: function() { return this.morphicGetter('FontFamily') },
-    setFontWeight: function(fontName) { return this.morphicSetter('FontWeight', fontName) },
+    setFontWeight: function(weight) { return this.morphicSetter('FontWeight', weight); },
     getFontWeight: function() { return this.morphicGetter('FontWeight') },
-    setFontStyle: function(fontName) { return this.morphicSetter('FontStyle', fontName) },
+    setFontStyle: function(style) { return this.morphicSetter('FontStyle', style); },
     getFontStyle: function() { return this.morphicGetter('FontStyle') },
-    setTextDecoration: function(fontName) { return this.morphicSetter('TextDecoration', fontName) },
+    setTextDecoration: function(decoration) { return this.morphicSetter('TextDecoration', decoration); },
     getTextDecoration: function() { return this.morphicGetter('TextDecoration') },
 
     setPadding: function(rect) {
@@ -462,6 +468,15 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
 },
 'rendering', {
 
+    fitToSubmorphs: function() {
+      if (!this.submorphs.length) return;
+      var subBounds = this.submorphBounds(new lively.morphic.Similitude()),
+          l = this.getLayouter(),
+          offset = l ? l.getBorderSize() : 0,
+          padding = this.getPadding();
+      this.setExtent(subBounds.bottomRight().addXY(offset, offset).addXY(padding.bottom(), padding.right()));
+    },
+  
     growOrShrinkToFit: function() {
         if (!this.getExtent().eqPt(this.getTextExtent())) {
             this.setExtent(this.getTextExtent());
@@ -607,7 +622,7 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
             fill: null,
             borderWidth: 0,
             fixedWidth: false, fixedHeight: false,
-            allowInput: false,
+            allowInput: false, selectable: false,
             clipMode: 'hidden',
             whiteSpaceHandling: "pre"
         };
@@ -1023,7 +1038,7 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
         this.insertAtCursor(replacement, true, true);
     },
 
-    splitText: function() {
+    splitText: function () {
         var selRange = this.getSelectionRange(),
             from = Math.max(selRange[0], selRange[1]),
             to = this.textString.length,
@@ -1033,18 +1048,42 @@ lively.morphic.Morph.subclass('lively.morphic.Text', Trait('TextChunkOwner'),
         this.owner.addMorph(copy);
 
         // remove text that is splitted
-        this.setSelectionRange(from, to);
+        if (this.textString[from -1] == '\n') {
+            this.setSelectionRange(from - 1, to); // and a trailing newline
+        } else {
+            this.setSelectionRange(from, to);
+        }
+
+        // inserting empty strings is broken and inserts junk...
+        // so we have to insert something here
+        // hack: insert and delete something so that the autolayouting of the CheapWorldLayouter won't break
+        this.insertAtCursor('\u200b', false, true);
+        this.fixChunks();
+        // hack: get rid of the space again
+
+        this.setSelectionRange(this.textString.length - 1 ,this.textString.length);
         this.insertAtCursor('', false, true);
+        this.fixChunks();
 
-        // remove text in copy before splitted text
+        // remove text in copy space splitted text
         copy.setSelectionRange(0, from);
+        copy.insertAtCursor('\u200b', false, true);
+        copy.fixChunks();
+
+        // hack: get rid of the second newline again
+        copy.setSelectionRange(0,1);
         copy.insertAtCursor('', false, true);
+        copy.fixChunks();
+        // set cursor to beginning
 
-        var offset = pt(0,3);
-        copy.align(copy.bounds().topLeft(), this.bounds().bottomLeft().addPt(offset));
-        copy.focus.bind(copy).delay(0)
-
-        copy.fit(); // for layouting
+        (function() {
+            var offset = pt(0,3);
+            this.fit()
+            copy.fit()
+            copy.align(copy.bounds().topLeft(), this.bounds().bottomLeft().addPt(offset));
+            copy.setSelectionRange(0, 0);
+            copy.focus(0)
+        }).bind(this).delay(0)
 
         return copy;
     },
@@ -2960,7 +2999,13 @@ Object.subclass('lively.morphic.TextEmphasis',
                 var doit = this.doit;
                 this.addCallbackWhenApplyDone('click', function(evt) {
                     lively.morphic.EventHandler.prototype.patchEvent(evt);
-                    var src = '(function(evt) {\n' + doit.code + '\n})';
+                    var code = lively.lang.fun.extractBody(function() {
+                      // so we reset our event sytem after clikcing on a "strange" thing
+                      $world.hands[0].clickedOnMorph = null;
+                      $world.hands[0].draggedMorph = null;
+                      __CODE__
+                    }).replace("__CODE__", doit.code)
+                    var src = '(function(evt) {\n' + code + '\n})';
                     try {
                         var func = eval(src);
                         func.call(doit.context || Global, evt);
@@ -3020,7 +3065,10 @@ Object.subclass('lively.morphic.TextEmphasis',
                 return this.color == other.color ||
                     (this.color && this.color.isColor && this.color.equals(other.color));
             },
-            apply: function(node) { if (this.hasOwnProperty("color")) node.style.color = this.color; }
+            apply: function(node) {
+              if (this.hasOwnProperty("color"))
+                node.style.color = this.color && this.color.isColor ?
+                  this.color.toCSSString() : this.color; }
         },
 
         backgroundColor: {
@@ -3080,6 +3128,23 @@ Object.subclass('lively.morphic.TextEmphasis',
             apply: function(node) { if (this.hasOwnProperty("textShadow")) node.style.textShadow = this.textShadow }
         },
 
+        cssClasses: {
+            set: function(value) { this.cssClasses = value || []; },
+            get: function() { return this.cssClasses; },
+            equals: function(other) {
+              return lively.lang.arr.equals(
+                (this.cssClasses || []).sort(),
+                (other.cssClasses || []).sort());
+            },
+            apply: function(node) {
+              var $node = lively.$(node);
+              var currentClasses = ($node.attr("class") || "").split(" ");
+              var remove = currentClasses.withoutAll(this.cssClasses || []);
+              $node.removeClass(remove.join(" "));
+              $node.addClass((this.cssClasses || []).join(" "));
+            }
+        },
+
         isNullStyle: {
             set: function(value) { return this.isNullStyle = value },
             get: function() { return this.isNullStyle },
@@ -3129,7 +3194,9 @@ Object.subclass('lively.morphic.TextEmphasis',
     getFontSize:         function()      { return this.get('fontSize'); },
     setFontSize:         function(value) { return this.set('fontSize', value); },
     getTextShadow:       function()      { return this.get('textShadow'); },
-    setTextShadow:       function(value) { return this.set('textShadow', value); }
+    setTextShadow:       function(value) { return this.set('textShadow', value); },
+    getTextShadow:       function()      { return this.get('cssClasses'); },
+    setTextShadow:       function(value) { return this.set('cssClasses', value); }
 },
 'cloning', {
     clone: function() { return new this.constructor(this) }
@@ -3165,7 +3232,8 @@ Object.subclass('lively.morphic.TextEmphasis',
             && attrs.textDecoration  .equals.call(this, other)
             && attrs.textAlign       .equals.call(this, other)
             && attrs.fontSize        .equals.call(this, other)
-            && attrs.textShadow      .equals.call(this, other);
+            && attrs.textShadow      .equals.call(this, other)
+            && attrs.cssClasses      .equals.call(this, other);
     },
 
     include: function(specOrEmph) {
@@ -3245,6 +3313,7 @@ Object.subclass('lively.morphic.TextEmphasis',
         attrs.textAlign       .apply.call(this, node);
         attrs.fontSize        .apply.call(this, node);
         attrs.textShadow      .apply.call(this, node);
+        attrs.cssClasses      .apply.call(this, node);
         // attrs.isNullStyle.apply.call(this, node);
 
         this.installCallbackHandler(node);

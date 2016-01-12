@@ -7,7 +7,8 @@ Object.subclass('lively.net.WebSocket',
         // It will internally use a WebSocket object and manage (re)opening
         // connections on its own
         // For the server code see the WebSocketExample subserver
-        var url = URL.nodejsBase.withFilename("WebSocketExample/connect").toString();
+        var url = URL.nodejsBase.withFilename("WebSocketEcho/connect").toString();
+
         var ws = new lively.net.WebSocket(url, {protocol: 'lively-json'});
         lively.bindings.connect(ws, 'closed', Global, 'show', {converter: function() { return 'websocket closed'; }});
         lively.bindings.connect(ws, 'lively-message', Global, 'show');
@@ -114,14 +115,17 @@ Object.subclass('lively.net.WebSocket',
             var callbacks = responseId && this.callbacks[responseId];
             if (!callbacks) return;
             var expectMore = !!msg.expectMoreResponses;
-            callbacks.forEach(function(cb) { 
+            callbacks.forEach(function(cb) {
                 try {
                     cb(msg, expectMore);
                 } catch(e) {
                     console.error(show('Error in websocket message callback\n%s', e.stack || e));
                 }
             });
-            if (!expectMore) callbacks.clear();
+            if (!expectMore) {
+              callbacks.clear();
+              delete this.callbacks[responseId];
+            }
         } else { // an initiating message
             lively.bindings.signal(this, 'lively-message', msg);
         }
@@ -181,7 +185,7 @@ Object.subclass('lively.net.WebSocket',
             this.connect(); return; }
 
         // send logic
-        this._sendInProgress = true; 
+        this._sendInProgress = true;
         var ws = this;
         function doSend() {
             try {

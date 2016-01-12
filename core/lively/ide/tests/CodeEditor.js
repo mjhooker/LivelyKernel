@@ -27,6 +27,7 @@ AsyncTestCase.subclass('lively.ide.tests.CodeEditor.Base',
 
 lively.ide.tests.CodeEditor.Base.subclass('lively.ide.tests.CodeEditor.Interface',
 'testing', {
+
     testCreation: function() {
         this.editor.textString = "some content";
         this.assertHasText(this.editor, 'some content');
@@ -97,12 +98,25 @@ lively.ide.tests.CodeEditor.Base.subclass('lively.ide.tests.CodeEditor.Interface
         this.done();
     },
     testConnectToTextChange: function() {
-        var e = this.editor, changeTriggered, obj = {onChange: function(evt) { changeTriggered = true; }};
+        var e = this.editor,
+            triggerCount = 0,
+            obj = {onChange: function(evt) { triggerCount++; }};
         e.textString = "some\ncontent";
         lively.bindings.connect(e, 'textChange', obj, 'onChange');
         e.insertAtCursor('foo');
         this.delay(function() {
-            this.assert(changeTriggered, 'textChange connection not working');
+            this.assertEquals(1,triggerCount, 'textChange connection not working');
+            this.done();
+        }, 300);
+    },
+    testConnectToTextString: function() {
+        var e = this.editor,
+            triggerCount = 0,
+            obj = {onChange: function(evt) { triggerCount++; }};
+        lively.bindings.connect(e, 'textString', obj, 'onChange');
+        e.textString = "some\ncontent";
+        this.delay(function() {
+            this.assertEquals(1,triggerCount, 'textString connection not working');
             this.done();
         }, 300);
     },
@@ -162,8 +176,32 @@ lively.ide.tests.CodeEditor.Base.subclass('lively.ide.tests.CodeEditor.Interface
             e.insertAtCursor("\nfoo");
             insertStuff.curry(n-1, thenDo).delay(0.1);
         }
-    }
+    },
 
+    testMorphicPositionAndBounds: function() {
+      this.epsilon = 2.5;
+      var e = this.editor, ed;
+      e.openInWorld();
+      e.withAceDo(function(_ed) { ed = _ed; });
+
+      this.waitFor(function() { return !!ed; }, 10, function() {
+        var expectedWidth = ed.renderer.layerConfig.characterWidth*4,
+            expectedHeight = ed.renderer.layerConfig.lineHeight;
+
+        e.textString = "some\ncontent            f!";
+        ed.moveCursorTo(0,0);
+        e.setScroll(0, 0);
+        var range = e.getSession().getWordRange(0, 0),
+            bounds = e.rangeToMorphicBounds(range);
+        this.assertEqualsEpsilon(lively.rect(45,0,29,16), bounds, "1");
+
+        e.setScroll(20, 0);
+        var bounds = e.rangeToMorphicBounds(range);
+        this.assertEqualsEpsilon(lively.rect(25,0,29,16), bounds, "2: scroll?!");
+
+        this.done();
+      });
+    },
 });
 
 lively.ide.tests.CodeEditor.Base.subclass('lively.ide.tests.CodeEditor.Tokens',
@@ -274,7 +312,7 @@ lively.ide.tests.CodeEditor.Base.subclass('lively.ide.tests.CodeEditor.Commands'
         e.moveForwardToMatching(false, true);
         this.assertEquals(pt(2,0), e.getCursorPosition(), "|ab { c } -> ab| { c }");
         e.moveForwardToMatching(false, true);
-        this.assertEquals(pt(3,0), e.getCursorPosition(), "ab| { c } -> ab |{ c }");
+        this.assertEquals(pt(3,0), e.getCursorPosition(), "ab| { c } -> ab { |c }");
         e.moveForwardToMatching(false, true);
         this.assertEquals(pt(8,0), e.getCursorPosition(), "ab {| c } -> ab { c |}");
         this.done();

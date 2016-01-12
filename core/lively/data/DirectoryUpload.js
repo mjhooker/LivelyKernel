@@ -34,26 +34,37 @@ lively.data.FileUpload.Handler.subclass('lively.data.DirectoryUpload.Handler', {
             title: 'Directory contents of ' + entry.fullPath,
             content: printed,
             textMode: 'text'
-        });
+        }).getWindow().comeForward();
     },
 
     printFileNameListAsTree: function(files, title) {
+        // files: [{path: STTRING}*]
         var fileSplitter = "/";
+        var doubleSplitterRe = new RegExp(fileSplitter + fileSplitter + "+");
+        var splitterStartRe = new RegExp("^" + fileSplitter);
+        var splitterEndRe = new RegExp(fileSplitter + "\s*$");
         var fileMap = files
-            .map(function(ea) { return ea.startsWith(fileSplitter) ? ea.slice(1) : ea; })
+            .map(function(ea) {
+              return ea.replace(splitterStartRe, "")
+                       .replace(splitterEndRe, "")
+                       .replace(doubleSplitterRe, fileSplitter);
+              })
             .reduce(function(fileMap, file) {
                 lively.PropertyPath(file, fileSplitter).set(fileMap, file, true);
                 return fileMap;
             }, {})
 
-        var hier = createHierarchy(fileMap, ".");
+        var hier = createHierarchy(fileMap, "");
         if (hier.children.length === 1) hier = hier.children[0];
-        var printed = Strings.printTree(hier, function(ea) { return ea.name.split(fileSplitter).last(); }, function(ea) { return ea.children; })
+        var printed = fileSplitter + Strings.printTree(hier,
+          function(ea) { return ea.name.split(fileSplitter).compact().last(); },
+          function(ea) { return ea.children; })
         $world.addCodeEditor({
             title: (title || "file listing"),
             content: printed,
-            textMode: 'texttree'
-        });
+            textMode: 'texttree',
+            extent: pt(400, 500)
+        }).getWindow().comeForward();
 
         function createHierarchy(fileMap, currentPath) {
             if (Object.isString(fileMap)) return {name: currentPath};

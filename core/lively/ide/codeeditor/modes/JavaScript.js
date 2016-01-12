@@ -6,7 +6,15 @@ jsMode.addMethods({
 
     morphMenuItems: function(items, editor) {
         var mode = this,
-            s = editor.getSession();
+            s = editor.getSession(),
+            cmds = lively.ide.commands.getCommands({editor: editor}),
+            settingsIndex = items;
+
+        items.push({isMenuItem: true, isDivider: true});
+        items.push(editor.menuItemForCommand('property completion', cmds['list protocol']));
+        items.push(editor.menuItemForCommand('inspect', cmds['doInspect']));
+        items.push(editor.menuItemForCommand('printit', cmds['printit']));
+        items.push(editor.menuItemForCommand('doit', cmds['doit']));
 
         var jsItems = [
           ["open AST editor", function() { lively.ide.commands.exec("lively.ide.openASTEditor", editor); }]
@@ -17,11 +25,16 @@ jsMode.addMethods({
             cursorOverIdentifier = tokensAtCursor.any(function(t) { return acceptedIdentifierTokens.include(t.type) });
 
         if (cursorOverIdentifier) {
-          jsItems.push(["jump to definition (Alt-.)", function() { editor.aceEditor.execCommand("selectDefinition"); editor.focus(); }]);
-          jsItems.push(["select all occurrences in scope (Ctrl-Shift-')", function() { editor.aceEditor.execCommand("selectSymbolReferenceOrDeclaration"); editor.focus(); }]);
+          items.push(["jump to definition (Alt-.)", function() { editor.aceEditor.execCommand("selectDefinition"); editor.focus(); }]);
+          items.push(["select all occurrences in scope (Ctrl-Shift-')", function() { editor.aceEditor.execCommand("selectSymbolReferenceOrDeclaration"); editor.focus(); }]);
         }
 
-        items.push(['js', jsItems]);
+        items.push(['more...', jsItems]);
+
+        if (lively.Config.evalMarkersEnabled && module("lively.ide.codeeditor.EvalMarker").isLoaded()) {
+          items.push(['eval marker...', lively.morphic.CodeEditorEvalMarker.menuItemsFor(editor)]);
+        }
+
         return items;
     },
 
@@ -35,7 +48,7 @@ jsMode.addMethods({
 Object.subclass('lively.ide.codeeditor.modes.JavaScript.Navigator',
 'helper', {
     ensureAST: function(astOrSource) {
-        return Object.isString(astOrSource) ? lively.ast.acorn.fuzzyParse(astOrSource) : astOrSource;
+        return Object.isString(astOrSource) ? lively.ast.fuzzyParse(astOrSource) : astOrSource;
     },
 
     move: function(selector, ed) {
@@ -51,6 +64,7 @@ Object.subclass('lively.ide.codeeditor.modes.JavaScript.Navigator',
       range[isBackward ? "setStart" : "setEnd"](newPos.row, newPos.column);
       if (!select) range[isBackward ? "setEnd" : "setStart"](newPos.row, newPos.column);
       sel.setRange(range, isBackward);
+      ed.renderer.scrollCursorIntoView();
     }
 
 },
@@ -171,9 +185,9 @@ lively.ide.codeeditor.ModeChangeHandler.subclass('lively.ide.codeeditor.modes.Ja
 },
 "parsing", {
     parse: function(src, session) {
-        var options = {withComments: true};
+        var options = {withComments: true, allowReturnOutsideFunction: true};
         options.type = session.$astType;
-        return lively.ast.acorn.fuzzyParse(src, options);
+        return lively.ast.fuzzyParse(src, options);
     }
 },
 'rendering', {

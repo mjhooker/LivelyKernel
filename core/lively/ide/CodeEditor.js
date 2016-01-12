@@ -55,6 +55,7 @@ lively.morphic.Shapes.External.subclass("lively.morphic.CodeEditorShape",
 
 
 lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
+Trait('lively.morphic.SetStatusMessageTrait'),
 'settings', {
     style: {
         enableGrabbing: false, enableDropping: false,
@@ -71,6 +72,7 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         elasticTabs: Config.get('useElasticTabs'),
         tabSize: Config.get('defaultTabSize'),
         autocompletion: Config.get('aceDefaultEnableAutocompletion'),
+        behaviors: Config.get('aceDefaultEnableBehaviors'),
         showWarnings: Config.get('aceDefaultShowWarnings'),
         showErrors: Config.get('aceDefaultShowErrors')
     },
@@ -81,7 +83,8 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
     isCodeEditor: true,
     isText: true,
     showsMorphMenu: true,
-    connections: {textChange: {}, textString: {}, savedTextString: {}}
+    connections: {textChange: {}, textString: {signalOnAssignment: false}, savedTextString: {}},
+    printInspectMaxDepth: 2
 },
 'initializing', {
     initialize: function($super, bounds, stringOrOptions) {
@@ -120,6 +123,7 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         if (spec.showActiveLine !== undefined) this.setShowActiveLine(spec.showActiveLine);
         if (spec.softTabs !== undefined)       this.setSoftTabs(spec.softTabs);
         if (spec.autocompletion !== undefined) this.setAutocompletionEnabled(spec.autocompletion);
+        if (spec.behaviors !== undefined)      this.setBehaviorsEnabled(spec.behaviors);
         if (spec.showWarnings !== undefined)   this.setShowWarnings(spec.showWarnings);
         if (spec.showErrors !== undefined)     this.setShowErrors(spec.showErrors);
         if (spec.tabSize !== undefined)        this.setTabSize(spec.tabSize);
@@ -154,12 +158,14 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
     initializeAce: function(force) {
         var initializedEarlier = this._aceInitialized;
         if (initializedEarlier) return;
+
         // 1) create ace editor object
         this._aceInitialized = true;
         var node = this.getShape().shapeNode,
             e = this.aceEditor || (this.aceEditor = ace.edit(node)),
             morph = this;
         e.$morph = this;
+        e.$blockScrolling = Infinity; // http://stackoverflow.com/questions/28936479/where-to-set-ace-editor-blockscrolling
         if (!initializedEarlier) {
             e.on('focus', function() { morph._isFocused = true; });
             e.on('blur', function() { morph._isFocused = false; });
@@ -171,6 +177,7 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         }
         node.setAttribute('id', 'ace-editor');
         this.disableTextResizeOnZoom(e);
+        e.setOption("dragEnabled", false); // HTML5 drag / drop of text
 
         // 2) let the shape know about the editor, this let's us do some optimizations
         this.getShape().aceEditor = e;
@@ -194,8 +201,11 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         if (this.getElasticTabs()) this.setElasticTabs(true);
         this.setShowActiveLine(this.getShowActiveLine());
         this.setAutocompletionEnabled(this.getAutocompletionEnabled());
+        this.setBehaviorsEnabled(this.getBehaviorsEnabled());
         this.setShowWarnings(this.getShowWarnings());
         this.setInputAllowed(this.inputAllowed());
+        this.setDraggableCodeEnabled(this.getDraggableCodeEnabled());
+        this.setScrubbingEnabled(this.getScrubbingEnabled());
 
         // 4) run after setup callbacks
         var cbs = this.aceEditorAfterSetupCallbacks;
@@ -408,6 +418,7 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
                     sel.selectToPosition(to);
                 }
             }
+            ed.renderer.scrollCursorIntoView();
         });
     },
 
@@ -518,6 +529,18 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         this.withAceDo(function(ed) {
             ed.session.removeMarker(marker);
         });
+    },
+
+    getLine: function(row) {
+      return this.withAceDo(function(ed) {
+        return ed.session.getLine(row);
+      });
+    },
+
+    getLineRange: function(row, excludeLastChar) {
+      return this.withAceDo(function(ed) {
+        return ed.selection.getLineRange(row, excludeLastChar);
+      });
     }
 
 },
@@ -661,28 +684,28 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
     doBrowseImplementors: function(ed) {
         this.world().openMethodFinderFor(this.getSelectionOrLineString(), '__implementor');
     },
+
     doBrowseSenders: function() {
         this.world().openMethodFinderFor(this.getSelectionOrLineString(), '__sender')
-    },
-
+    }
 
 },
 'event handling', {
 
     onMouseDownEntry: function($super, evt) {
-        // ace installs a pointerup event handler on the document level and
+        // ace installs a Global.Event.INPUT_TYPE_UP event handler on the document level and
         // stops the event so it never reaches our Morphic event handlers. To
         // still dispatch the event properly we install an additional pointerup
         // handler that is removed immediately thereafter
         var self = this;
         function upHandler(evt) {
-            document.removeEventListener("pointerup", upHandler, true);
+            document.removeEventListener(Global.Event.INPUT_TYPE_UP, upHandler, true);
             lively.morphic.EventHandler.prototype.patchEvent(evt);
             evt.hand.clickedOnMorph = self;
             [self].concat(self.ownerChain()).reverse().forEach(function(ea) {
                 ea.onMouseUpEntry(evt); });
         }
-        document.addEventListener("pointerup", upHandler, true);
+        document.addEventListener(Global.Event.INPUT_TYPE_UP, upHandler, true);
         evt.hand.clickedOnMorph = this;
         return $super(evt);
     },
@@ -717,17 +740,11 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
     getScroll: function(x,y) {
         return this.withAceDo(function(ed) {
             return [ed.session.getScrollLeft(), ed.session.getScrollTop()];
-        });
+        }) || [0,0];
     },
 
     scrollToRow: function(row) {
         return this.withAceDo(function(ed) { return ed.scrollToRow(row); })
-    },
-
-    onFocus: function($super, evt) {
-        $super(evt);
-        var scroll = evt.world.getScroll();
-        (function() { evt.world.scrollTo(scroll[0], scroll[1]); }).delay(0);
     },
 
     doKeyCopy: Functions.Null,
@@ -792,7 +809,7 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         content: (JSON.stringify(existing, null, 2)),
         textMode: "json",
       });
-      
+
       editor.setStatusMessage("Press " + this.commandKeyName() + "-s to save\n"
                             + "customizations should have the form\n{\"command-name\": \"key\"}\n", null, 10);
 
@@ -815,7 +832,10 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
           }
         }
       });
-    }
+    },
+
+    isClip: function() { return false; }
+
 },
 'text morph eval interface', {
 
@@ -841,66 +861,85 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         }
     },
 
-    boundEval: function (__evalStatement, __evalOptions) {
-        // Evaluate the string argument in a context in which "this" is
-        // determined by the reuslt of #getDoitContext
-        var ctx = this.getDoitContext() || this,
-            str,
-            interactiveEval = function() {
-                try {
-                    return eval(str = '(' + __evalStatement + ')');
-                } catch (e) {
-                    return eval(str = __evalStatement);
-                }
-            },
-            interactiveDebugEval = function(ctx) {
-                module('lively.ast.AcornInterpreter').load(true); // also loads lively.ast.Rewriting
-                var interpreter = new lively.ast.AcornInterpreter.Interpreter(),
-                    ast;
-                try {
-                    ast = lively.ast.acorn.parse(str = '(' + __evalStatement + ')');
-                    acorn.walk.addAstIndex(ast);
-                    acorn.walk.addSource(ast, str);
-                    return interpreter.runWithContext(ast, ctx, Global);
-                } catch (e) {
-                    ast = lively.ast.acorn.parse(str = __evalStatement);
-                    acorn.walk.addAstIndex(ast);
-                    acorn.walk.addSource(ast, str);
-                    // In case str starts with a comment, set str to program node
-                    ast.source = str;
-                    return interpreter.runWithContext(ast, ctx, Global);
-                }
-            };
-
-        if (lively.Config.get('improvedJavaScriptEval') && __evalStatement.length < 150000) {
-            try {
-                var result;
-                lively.lang.VM.runEval(__evalStatement, {
-                    context: ctx,
-                    topLevelVarRecorder: Global,
-                    varRecorderName: 'Global',
-                    dontTransform: lively.ast.query.knownGlobals,
-                    sourceURL: __evalOptions ? __evalOptions.sourceURL : undefined
-                }, function(err, _result) { result = err || _result; });
-                return result;
-            } catch(e) {
-                if (Config.showImprovedJavaScriptEvalErrors) $world.logError(e)
-                else console.error("Eval preprocess error: %s", e.stack || e);
-            }
-        }
-
+    boundEvalImproved: function (__evalStatement, __evalOptions) {
         try {
-            var result = !lively.Config.get('loadRewrittenCode') ? interactiveEval.call(ctx) : interactiveDebugEval(ctx),
-                itemName = "Changesets:" +  $world.getUserName() + ":" + location.pathname;
-            if (Config.changesetsExperiment && $world.getUserName() && lively.LocalStorage.get(itemName) !== "off")
-                lively.ChangeSet.logDoit(str, ctx.lvContextPath());
+            var result;
+            lively.lang.VM.runEval(
+              __evalStatement,
+              lively.lang.obj.merge({
+                context: this.getDoitContext() || this,
+                topLevelVarRecorder: Global,
+                varRecorderName: 'Global',
+                dontTransform: lively.ast.query.knownGlobals,
+                sourceURL: undefined
+              }, __evalOptions),
+              function(err, _result) { result = err || _result; });
             return result;
         } catch(e) {
-            if (lively.Config.get('loadRewrittenCode') && e.unwindException)
-                throw e.unwindException;
-            else
-                throw e;
+            if (lively.Config.showImprovedJavaScriptEvalErrors) $world.logError(e)
+            else console.error("Eval preprocess error: %s", e.stack || e);
+            return e;
         }
+    },
+
+    boundEvalSimple: function (__evalStatement, __evalOptions) {
+      return (function interactiveEval() {
+          try {
+              return eval('(' + __evalStatement + ')');
+          } catch (e) {
+              return eval(__evalStatement);
+          }
+      }).call(this.getDoitContext() || this);
+    },
+
+    boundEvalDebug: function (__evalStatement) {
+        function interactiveDebugEval(ctx) {
+            module('lively.ast.AcornInterpreter').load(true); // also loads lively.ast.Rewriting
+            var interpreter = new lively.ast.AcornInterpreter.Interpreter(), ast,
+                walk = lively.ast.acorn.walk;
+            try {
+                ast = lively.ast.parse('(' + __evalStatement + ')');
+                walk.addAstIndex(ast);
+                walk.addSource(ast, '(' + __evalStatement + ')');
+                return interpreter.runWithContext(ast, ctx, Global);
+            } catch (e) {
+                ast = lively.ast.parse(__evalStatement);
+                walk.addAstIndex(ast);
+                walk.addSource(ast, __evalStatement);
+                // In case str starts with a comment, set __evalStatement to program node
+                ast.source = __evalStatement;
+                return interpreter.runWithContext(ast, ctx, Global);
+            }
+        };
+
+        try {
+            return interactiveDebugEval(this.getDoitContext() || this);
+        } catch(e) {
+            if (e.unwindException) throw e.unwindException;
+            else throw e;
+        }
+
+    },
+
+    boundEval: function (__evalStatement, __evalOptions) {
+        // Evaluate the __evalStatement argument in a context in which "this" is
+        // determined by the reuslt of #getDoitContext
+
+        var result;
+        if (lively.Config.get('improvedJavaScriptEval') && __evalStatement.length < 150000) {
+          result = this.boundEvalImproved(__evalStatement, __evalOptions);
+        } else if (lively.Config.get('loadRewrittenCode')) {
+          result = this.boundEvalDebug(__evalStatement);
+        } else {
+          result = this.boundEvalSimple(__evalStatement);
+        }
+
+        var ctx = this.getDoitContext() || this,
+            itemName = "Changesets:" +  $world.getUserName() + ":" + lively.Config.location.pathname;
+        if (lively.Config.changesetsExperiment && $world.getUserName() && lively.LocalStorage.get(itemName) !== "off")
+            lively.ChangeSet.logDoit(__evalStatement, ctx.lvContextPath());
+
+        return result;
     },
 
     sourceNameForEval: function() {
@@ -920,7 +959,7 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
       var doitMarker = "// =>", match;
       var printDepth = 1;
       var src = ed.textString;
-      var ast = lively.ast.acorn.parse(src);
+      var ast = lively.ast.parse(src);
 
       // 2. Find the doit markers in comments and for each comment get a range
       var commentRanges = Strings
@@ -1019,8 +1058,9 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
                 string = obj instanceof Error ? printError(obj) : String(obj);
             } catch (e) { string = printError(e); }
             if (asComment) string = commentify(string, ed.session.getMode().lineCommentStart);
-            ed.onPaste(string);
+            ed.insert(string);
             if (!suppressSelection) self.extendSelectionRange(-string.length);
+            ed.renderer.scrollCursorIntoView();
         }
 
         function commentify(string, lineCommentStart) {
@@ -1029,21 +1069,32 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         }
     },
 
-    doit: function(printResult, editor) {
+    doit: function(printResult, editor, options) {
+        options = lively.lang.obj.merge({depth: this.printInspectMaxDepth}, options);
+
         var text = this.getSelectionMaybeInComment(),
             range = this.getSelectionRange(),
             result = this.tryBoundEval(text, {range: {start: {index: range[0]}, end: {index: range[1]}}});
+
         if (printResult) {
           if (this.getPrintItAsComment()) {
-            try { result = " => " + Objects.inspect(result, {maxDepth: 4});
+            try { result = " => " + lively.morphic.printInspect(result, options.depth);
             } catch (e) { result = " => Error printing inspect view of " + result + ": " + e; }
           }
           this.printObject(editor, result, false, this.getPrintItAsComment());
           return;
         }
-        if (result && result instanceof Error && lively.Config.get('showDoitErrorMessages') && this.world()) {
+
+        var isError = result instanceof Error;
+        if (lively.Config.get("showDoitInMessageMorph")) {
+          if (result !== undefined) {
+            if (isError) this.showError(result)
+            else this.setStatusMessage(lively.morphic.printInspect(result, options.depth));
+          }
+        } else if (isError && lively.Config.get('showDoitErrorMessages') && this.world()) {
             this.world().logError(result, "doit error");
         }
+
         var sel = this.getSelection();
         if (sel && sel.isEmpty()) sel.selectLine();
         return result;
@@ -1068,23 +1119,30 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
     },
 
     doListProtocol: function() {
-        lively.require("lively.ide.codeeditor.Completions").toRun(function() {
-            new lively.ide.codeeditor.Completions.ProtocolLister(this)
-              .evalSelectionAndOpenNarrower();
-        }.bind(this));
+        var m = module("lively.ide.codeeditor.Completions");
+        if (!m.isLoaded()) {
+          m.load();
+          setTimeout(function() { this.doListProtocol(); }.bind(this), 200);
+        } else {
+          new lively.ide.codeeditor.Completions.ProtocolLister(this)
+            .evalSelectionAndOpenNarrower();
+        }
     },
 
     doInspect: function() {
         lively.morphic.inspect(this.evalSelection());
     },
 
-    printInspectMaxDepth: 1,
-
     printInspect: function(options) {
         options = options || {};
+        var msgMorph = this._statusMorph;
         this.withAceDo(function(ed) {
-            var obj = this.evalSelection();
-            this.printObject(ed, Objects.inspect(obj, {maxDepth: options.depth || this.printInspectMaxDepth}));
+            if (msgMorph && msgMorph.world()) {
+              ed.execCommand('insertEvalResult');
+            } else {
+              var obj = this.evalSelection();
+              this.printObject(ed, Objects.inspect(obj, {maxDepth: options.depth || this.printInspectMaxDepth}));
+            }
         });
     },
 
@@ -1098,12 +1156,13 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
 },
 'text morph event interface', {
     focus: function() {
+        if (this.aceEditor && this.aceEditor.isFocused()) return;
         if (this.aceEditor) this.aceEditor.focus();
         else this.withAceDo(function(ed) { return ed.focus.bind(ed).delay(0); });
     },
     isFocused: function() { return this._isFocused; },
     requestKeyboardFocus: function(hand) { this.focus(); },
-    onWindowGetsFocus: function(window) { this.focus(); }
+    onWindowGetsFocus: function(window) { if (!this.isFocused()) this.focus(); }
 },
 'text morph selection interface', {
 
@@ -1294,6 +1353,7 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
                 preventScroll: true
             });
             ed.selection.addRange(foundRange);
+            ed.renderer.scrollCursorIntoView();
         });
     },
 
@@ -1316,6 +1376,7 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
           sel.setRange(newRange);
           ranges.without(newRange).forEach(function(ea) { sel.addRange(ea, true); });
           ed.centerSelection();
+          ed.renderer.scrollCursorIntoView();
         });
     },
 
@@ -1374,14 +1435,17 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
         return ann.attach();
     },
 
-    addOrRemoveEvalMarker: function(evt) {
+    addOrRemoveEvalMarker: function() {
         var range = this.getSelectionRangeAce();
         return range.isEmpty() ? this.removeEvalMarker() : this.addEvalMarker();
     },
 
     addEvalMarker: function() {
         var range = this.getSelectionRangeAce();
-        if (range.isEmpty()) return;
+        if (range.isEmpty()) {
+          this.selectCurrentLine();
+          range = this.getSelectionRangeAce();
+        };
         var marker = lively.morphic.CodeEditorEvalMarker.setCurrentMarker(this, range);
         marker.evalAndInsert();
     },
@@ -1400,11 +1464,10 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
 
     set textString(string) {
         string = String(string);
-        if (!this.aceEditor) {
-          this.storedString = string;
-          this.withAceDo(function(ed) { delete this.storedString });
-        }
+        var aceInitialized = !!this.aceEditor;
+        if (!aceInitialized) this.storedString = string;
         this.withAceDo(function(ed) {
+            if (!aceInitialized) delete this.storedString;
             ed.selection.clearSelection();
             var pos = ed.getCursorPosition(),
                 scroll = ed.session.getScrollTop();
@@ -1468,10 +1531,8 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
             this.tryBoundEval(this.savedTextString, {range: {start: {index: 0}, end: {index: this.textString.length}}});
         }
     },
-    clear: function() {
-        this.textString = '';
-    },
 
+    clear: function() { this.textString = ''; },
 
     setFontSize: function(size) {
         this.withAceDo(function(ed) { ed.setOption("fontSize", size); });
@@ -1606,6 +1667,15 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
             return ed.getOption("enableBasicAutocompletion"); });
     },
 
+    setBehaviorsEnabled: function(bool) {
+        this.withAceDo(function(ed) { ed.setOption("behaviorsEnabled", bool); });
+        return this._BehaviorsEnabled = bool;
+    },
+    getBehaviorsEnabled: function() {
+        return this.hasOwnProperty("_BehaviorsEnabled") ? this._BehaviorsEnabled : this.withAceDo(function(ed) {
+            return ed.getOption("behaviorsEnabled"); });
+    },
+
     setShowWarnings: function(bool) { return this._ShowWarnings = bool; },
     getShowWarnings: function() {
         return this.hasOwnProperty("_ShowWarnings") ? this._ShowWarnings : true
@@ -1614,6 +1684,38 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
     setShowErrors: function(bool) { return this._ShowErrors = bool; },
     getShowErrors: function() {
         return this.hasOwnProperty("_ShowErrors") ? this._ShowErrors : true
+    },
+
+    setScrubbingEnabled: function(bool) {
+      var self = this,
+          m = module("lively.ide.codeeditor.Scrubbing");
+      if (bool) {
+        if (!m.isLoaded()) m.load();
+        m.runWhenLoaded(function() { m.enableInCodeEditor(self); });
+      } else {
+        if (m.isLoaded()) m.disableInCodeEditor(self);
+      }
+      return self._ScrubbingEnabled = bool;
+    },
+    getScrubbingEnabled: function() {
+        return this.hasOwnProperty("_ScrubbingEnabled") ? this._ScrubbingEnabled : lively.Config.get("aceDefaultScrubbingEnabled");
+    },
+
+    setDraggableCodeEnabled: function(bool) {
+      var self = this,
+          m = module('lively.ide.codeeditor.DraggableCode');
+      if (bool) {
+        if (!m.isLoaded()) m.load();
+        m.runWhenLoaded(function() { m.installIn(self); });
+      } else {
+        if (m.isLoaded()) m.uninstallFrom(self);
+      }
+      return self._DraggableCodeEnabled = bool;
+    },
+    getDraggableCodeEnabled: function() {
+      return this.hasOwnProperty("_DraggableCodeEnabled") ?
+        this._DraggableCodeEnabled :
+        lively.Config.get("draggableCodeInCodeEditor");
     },
 
     setPrintItAsComment: function(bool) { return this._PrintItAsComment = bool; },
@@ -1649,78 +1751,140 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
 },
 'rendering', {
     setClipMode: Functions.Null,
-    
+
     onOwnerChanged: function($super, newOwner) {
       if (!newOwner && this._statusMorph) this._statusMorph.remove();
       return $super(newOwner);
+    },
+
+    astNodeRange: function(node) {
+      return this.createRange(
+        this.indexToPosition(node.start),
+        this.indexToPosition(node.end));
+    },
+
+    astNodeMorphicBounds: function(node, useMaxColumn, useScreenPos) {
+      return this.rangeToMorphicBounds(
+        this.astNodeRange(node), useMaxColumn, useScreenPos);
+    },
+
+    lineToMorphicBounds: function(row) {
+      return this.rangeToMorphicBounds(this.getLineRange(row, true));
+    },
+
+    rangeToMorphicBounds: function(range, useMaxColumn, useScreenPos) {
+      var start = range.start,
+          end = lively.lang.obj.merge(range.end, {column: range.end.column-1});
+
+      if (useMaxColumn) {
+        var maxColumn = useMaxColumn ?
+          this.getSession().getLines(start.row, end.row).pluck("length").max() : 0;
+        end.column = maxColumn;
+      }
+
+      var topLeft = this.posToMorphicPos(start, "topLeft", useScreenPos),
+          bottomRight = this.posToMorphicPos(end, "bottomRight", useScreenPos);
+
+      return lively.rect(
+        topLeft.minPt(bottomRight),
+        topLeft.maxPt(bottomRight));
+    },
+
+    rangeToGlobalMorphicBounds: function(range, useMaxColumn, useScreenPos) {
+      return this.getGlobalTransform().transformRectToRect(
+        this.rangeToMorphicBounds(range, useMaxColumn, useScreenPos));
+    },
+
+    rangeFromGlobalMorphicBounds: function(bounds) {
+      var start = this.morphicPosToDocPos(bounds.topLeft()),
+          end = this.morphicPosToDocPos(bounds.bottomRight().addXY(-1,-1));
+      return this.createRange(start, end);
+    },
+
+    posToMorphicPos: function(pos, corner, useScreenPos) {
+      // useScreenPos: clip to actual lines in document
+      // FIXME: transformation?!
+      var ed = this.aceEditor,
+          r = ed.renderer,
+          config = r.layerConfig,
+          lineHeight = config.lineHeight,
+          pos = useScreenPos ? ed.session.documentToScreenPosition(pos.row, pos.column) : pos,
+          localCoords = {
+            x: r.gutterWidth + config.padding + pos.column * config.characterWidth,
+            y: pos.row * config.lineHeight - r.scrollTop
+          };
+
+      switch (corner) {
+        case 'topLeft':
+          break;
+        case 'bottomLeft':
+          localCoords.y += lineHeight;break;
+        case 'topRight':
+          localCoords.x += config.characterWidth;break;
+        case 'bottomRight':
+          localCoords.y += lineHeight;
+          localCoords.x += config.characterWidth;
+          break;
+        case 'center':
+          localCoords.y += lineHeight / 2;
+          localCoords.x += config.characterWidth / 2;
+          break;
+      }
+
+      var scrollLeft = this.getScroll()[0];
+
+      return lively.Point.ensure(localCoords).addXY(-scrollLeft, 0);
+    },
+
+    morphicPosToDocPos: function(globalPos) {
+      return this.withAceDo(function(ed) {
+        return ed.renderer.pixelToScreenCoordinates(
+            globalPos.x, globalPos.y);
+      });
     }
+
 },
 'morph menu', {
+
+    menuItemForCommand: function(name, cmd) {
+      // cmd as one of the commands returned by
+      // lively.ide.commands.getCommands({editor: this});
+      var editor = this,
+          binding = cmd.readableKeyBinding.replace(/\s*\|.*$/, ""),
+          label = name + " (" + binding + ")";
+      return [label, function() { cmd.exec(); editor.focus(); }];
+    },
+
     codeEditorMenuItems: function() {
-        var editor = this, items = [], self = this, world = this.world(),
-            range = this.getSelectionRangeAce(),
+        var editor = this, items = [],
+            mode = this.getTextMode(),
+            isJs = mode.match(/javascript/),
+            cmds = lively.ide.commands.getCommands({editor: this});
+
+        items.push(this.menuItemForCommand('save', cmds['doSave']));
+
+        // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+        // modes
+        this.withAceDo(function(ed) {
+            var mode = ed.session.getMode();
+            if (Object.isFunction(mode.morphMenuItems)) {
+                items = mode.morphMenuItems(items, this);
+            }
+        });
+
+        if (lively.Config.get("codeEditorMenuShowsSettings")) {
+          items.push({isMenuItem: true, isDivider: true});
+          items.push(['settings', this.codeEditorSettingsMenuItems()]);
+        }
+
+        return items;
+    },
+
+    codeEditorSettingsMenuItems: function() {
+
+        var editor = this, items = [], world = this.world(),
             mode = this.getTextMode(),
             isJs = mode.match(/javascript/);
-        
-        if (isJs) {
-          // eval marker
-          var evalMarkerItems = ['eval marker', []];
-          items.push(evalMarkerItems);
-          if (!range.isEmpty()) {
-              var selectedText = this.getSelectionOrLineString();
-              var indexOfDot = selectedText.lastIndexOf('.')
-              if(indexOfDot + 1 !== selectedText.length) {
-                  var firstChar = selectedText.charAt(indexOfDot + 1);
-                  if(firstChar.toLowerCase() === firstChar && indexOfDot === -1) {
-                      var selectorItems = ['Selector...', []];
-                      items.push(selectorItems);
-                      selectorItems[1].push(['Implementors', function() {
-                          self.doBrowseImplementors(); }]);
-                      selectorItems[1].push(['Senders', function() {
-                          self.doBrowseSenders(); }]);
-                  } else {
-                      if(firstChar.toUpperCase() === firstChar) {
-                          try {
-                              var potentialClass = this.boundEval(selectedText);
-                              if(potentialClass && potentialClass.isClass() && potentialClass.name() === selectedText.subString(indexOfDot + 1)) {
-                                  var classItems = ['Class...', []];
-                                  items.push(classItems);
-                                  classItems[1].push(['Browse', function() {
-                                      self.browseClass(potentialClass); }]);
-                                  classItems[1].push(['Browse Hierarchy', function() {
-                                      self.browseHierarchy(potentialClass); }]);
-                                  classItems[1].push(['References', function() {
-                                      self.browseReferencesTo(potentialClass); }]);
-                              }
-                          } catch(e) {
-                          }
-  //                        Global.classes(true);
-                      }
-                  }
-              }
-              evalMarkerItems[1].push(['Mark expression', function() {
-                  self.addEvalMarker(); }]);
-          }
-          evalMarkerItems[1].push(['Remove eval marker', function() {
-              self.removeEvalMarker(); }]);
-  
-          var marker = lively.morphic.CodeEditorEvalMarker.currentMarker;
-          if (marker) {
-              if (marker.doesContinousEval()) {
-                  evalMarkerItems[1].push(['Disable eval interval', function() {
-                      marker.stopContinousEval();
-                  }]);
-              } else {
-                  evalMarkerItems[1].push(['Set eval interval', function() {
-                      world.prompt('Please enter the interval time in milliseconds', function(input) {
-                          input = Number(input);
-                          marker.startContinousEval(input);
-                          self.evalMarkerDelay = input || null;
-                      }, '200');
-                  }]);
-              }
-          }
-        }
 
         // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
         // themes
@@ -1741,147 +1905,65 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
                 return [modeString, function(evt) { editor.setTextMode(mode); }]; });
 
         // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+        items.push(['Show effective keybindings', function() { editor.showEffectiveKeybindings(); }]);
+        items.push(['Customize keybindings', function() { editor.customizeKeybindingsInteractively(); }]);
+        items.push([lively.lang.string.format('[%s] use emacs-like keys', lively.Config.get('useEmacsyKeys') ? "X" : " "), function() { lively.Config.set('useEmacsyKeys', !lively.Config.get('useEmacsyKeys')); }]);
+        items.push(["modes", modeItems]);
+        items.push(["themes", themeItems]);
+        boolItem({name: "ShowGutter", menuString: "show line numbers"}, items);
+        boolItem({name: "ShowInvisibles", menuString: "show whitespace"}, items);
+        boolItem({name: "ShowPrintMargin", menuString: "show print margin"}, items);
+        boolItem({name: "ShowActiveLine", menuString: "show active line"}, items);
+        boolItem({name: "ShowIndents", menuString: "show indents"}, items);
+        boolItem({name: "SoftTabs", menuString: "use soft tabs"}, items);
+        items.push(['Change tab width', function() {
+          world.prompt('new tab size', function(input) { var size = Number(input); if (size) editor.setTabSize(size); }, editor.guessTabSize() || 4);
+        }]);
+        boolItem({name: "LineWrapping", menuString: "line wrapping"}, items);
+        items.push(['Change line ending mode', function() {
+          world.listPrompt('Choose line ending mode', function(input) { editor.setNewLineMode(input); }, ['auto', 'windows', 'unix'], editor.getNewLineMode(), pt(200,120));
+        }]);
+        boolItem({name: "ShowWarnings", menuString: "show warnings"}, items);
+        boolItem({name: "ShowErrors", menuString: "show Errors"}, items);
+        boolItem({name: "AutocompletionEnabled", menuString: "use Autocompletion"}, items);
+        if (isJs) {
+          boolItem({name: "PrintItAsComment", menuString: "printIt as comment"}, items);
+          boolItem({name: "AutoEvalPrintItComments", menuString: "re-evaluate printIt comments"}, items);
+          boolItem({name: "ScrubbingEnabled", menuString: "scrubbing"}, items);
+          boolItem({name: "DraggableCodeEnabled", menuString: "draggable code"}, items);
+          items.push(["Toggle recording debugger behavior", function() {
+            lively.require("lively.ide.codeeditor.JavaScriptDebugging").toRun(function() {
+              if (!!editor.recordingWorkspaceState) {
+                lively.ide.codeeditor.JavaScriptDebugging.removeRecordingWorkspaceBehavior(editor)
+              } else {
+                lively.ide.codeeditor.JavaScriptDebugging.makeRecordingWorkspace(editor);
+              }
+            })
+          }]);
+        }
+
+        return items;
+
         function boolItem(itemSpec, items) {
             var enabled = editor["get"+itemSpec.name]();
             var item = [Strings.format("[%s] " + itemSpec.menuString, enabled ? 'X' : ' '), function() {
-                editor['set'+itemSpec.name](!enabled); }].concat()
+                editor['set'+itemSpec.name](!enabled); }];
             items.push(item);
         }
-        var settingsItems = [];
-        settingsItems.push(['Show effective keybindings', function() { self.showEffectiveKeybindings(); }]);
-        settingsItems.push(['Customize keybindings', function() { self.customizeKeybindingsInteractively(); }]);
-        settingsItems.push(["themes", themeItems]);
-        settingsItems.push(["modes", modeItems]);
-        boolItem({name: "ShowGutter", menuString: "show line numbers"}, settingsItems);
-        boolItem({name: "ShowInvisibles", menuString: "show whitespace"}, settingsItems);
-        boolItem({name: "ShowPrintMargin", menuString: "show print margin"}, settingsItems);
-        boolItem({name: "ShowActiveLine", menuString: "show active line"}, settingsItems);
-        boolItem({name: "ShowIndents", menuString: "show indents"}, settingsItems);
-        boolItem({name: "SoftTabs", menuString: "use soft tabs"}, settingsItems);
-        settingsItems.push(['Change tab width', function() {
-            $world.prompt('new tab size', function(input) { var size = Number(input); if (size) editor.setTabSize(size); }, editor.guessTabSize() || 4);
-        }]);
-        boolItem({name: "LineWrapping", menuString: "line wrapping"}, settingsItems);
-        settingsItems.push(['Change line ending mode', function() {
-            $world.listPrompt('Choose line ending mode', function(input) { editor.setNewLineMode(input); }, ['auto', 'windows', 'unix'], editor.getNewLineMode(), pt(200,120));
-        }]);
-        boolItem({name: "ShowWarnings", menuString: "show warnings"}, settingsItems);
-        boolItem({name: "ShowErrors", menuString: "show Errors"}, settingsItems);
-        boolItem({name: "AutocompletionEnabled", menuString: "use Autocompletion"}, settingsItems);
-        if (isJs) {
-          boolItem({name: "PrintItAsComment", menuString: "printIt as comment"}, settingsItems);
-          boolItem({name: "AutoEvalPrintItComments", menuString: "re-evaluate printIt comments"}, settingsItems);
-        }
-        items.push(['settings', settingsItems]);
-
-        var mac = UserAgent.isMacOS;
-        function cmdBinding(options) {
-            // options = {name, [cmdName,] [shortcut=STRING||{mac:STRING,win:STRING},] [focusAfter]}
-            var shortcut = '';
-            if (options.shortcut) {
-                shortcut += ' (' + (Object.isObject(options.shortcut) ?
-                    options.shortcut[mac ? 'mac' : 'win'] : options.shortcut) + ')';
-            }
-            var menuName = options.name + shortcut;
-            items.push([menuName, function() {
-                editor.aceEditor.execCommand(options.cmdName || options.name);
-                if (options.focusAfter) editor.focus();
-            }]);
-        }
-        
-        cmdBinding({name: 'save', cmdName: 'doSave', shortcut: {win: 'CTRL-s', mac: 'CMD-s'}});
-        if (isJs) {
-          cmdBinding({name: 'property completion', cmdName: 'list protocol', shortcut: {win: 'CTRL-P', mac: 'CMD-P'}});
-          cmdBinding({name: 'inspect', cmdName: 'doInspect', shortcut: {win: 'CTRL-I', mac: 'CMD-I'}});
-          cmdBinding({name: 'printit', shortcut: {win: 'CTRL-p', mac: 'CMD-p'}});
-          cmdBinding({name: 'doit', shortcut: {win: 'CTRL-d', mac: 'CMD-d'}});
-        }
-
-        // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-        // modes
-        this.withAceDo(function(ed) {
-            var mode = ed.session.getMode();
-            if (Object.isFunction(mode.morphMenuItems)) {
-                items = mode.morphMenuItems(items, this);
-            }
-        });
-
-        return items;
     },
+
     morphMenuItems: function($super) {
         return $super().concat([['CodeEditor...', this.codeEditorMenuItems()]]);
     },
+
     showMorphMenu: function ($super, evt) {
-        if (!evt || !evt.isRightMouseButtonDown()) return $super(evt);
-        lively.morphic.Menu.openAtHand('', this.codeEditorMenuItems());
-        evt && evt.stop();
-        return true;
-    }
-},
-'messaging', {
-    setStatusMessage: function (msg, color, delay) {
-        var world = this.world();
-        if (!world) return;
-        var self = this, sm = this._statusMorph,
-            ext = this.getExtent();
-
-        // create if not there yet. Note that every editor gets its own message
-        // morph but that the message morph will be a submorph of world
-        if (!sm) {
-            this._statusMorph = sm = new lively.morphic.Text(ext.withY(80).extentAsRectangle());
-            sm.applyStyle({
-                fontFamily: 'Monaco,monospace',
-                borderWidth: 0, borderRadius: 6,
-                fontSize: this.getFontSize()-2,
-                inputAllowed: false,
-                fixedWidth: true, fixedHeight: false,
-            });
-            sm.isEpiMorph = true;
-        }
-
-        // setting 'da message
-        if (Array.isArray(msg)) sm.setRichTextMarkup(msg);
-        else sm.textString = msg;
-        sm.lastUpdated = Date.now();
-        world.addMorph(sm);
-        var color = color || Color.white;
-        var fill = (color === Color.green || color === Color.red) ? Color.white : Color.black.lighter()
-        sm.applyStyle({
-            textColor: color, fill: fill,
-            position: this.worldPoint(this.innerBounds().bottomLeft()),
-        });
-
-        // aligning
-        sm.fit();
-        (function() {
-          var visibleBounds = world.visibleBounds(),
-              overlapY = sm.bounds().bottom() - visibleBounds.bottom();
-          if (overlapY > 0) sm.moveBy(pt(0, -overlapY));
-          sm.setExtent(sm.getExtent().withX(ext.x));
-        }).delay(0);
-
-        // either remove via timeout or when curs/selection changes occur. Note
-        // that via onOwnerChanged the statusMorph also is removed when the
-        // editors owner is null
-        (function() {
-          function removeStatusMessage() {
-            sm.remove();
-            self.withAceDo(function(ed) { ed.off("changeSelection", removeStatusMessage); })
-          }
-        
-          if (sm._removeTimer) clearTimeout(sm._removeTimer);
-          if (typeof delay === "number") {
-            sm._removeTimer = setTimeout(removeStatusMessage, 1000*delay)
-          } else {
-            self.withAceDo(function(ed) { ed.once("changeSelection", removeStatusMessage); });
-          }
-        }).delay(0);
-    },
-    hideStatusMessage: function () {
-        if (this._statusMorph && this._statusMorph.owner) this._statusMorph.remove();
-    },
-    showError: function (e, offset) {
-        this.setStatusMessage(String(e), Color.red);
+        if (evt && (evt.isRightMouseButtonDown()
+         || (evt.isLeftMouseButtonDown() && (UserAgent.isMacOS && evt.isCtrlDown())))) {
+          lively.morphic.Menu.openAtHand('', this.codeEditorMenuItems());
+          evt && evt.stop();
+          return true;
+         } else  return $super(evt);
     }
 },
 'text operations', {
@@ -1908,7 +1990,6 @@ lively.morphic.Morph.subclass('lively.morphic.CodeEditor',
     }
 
 },
-
 'file access', {
     getTargetFilePath: function() {
         // a codeeditor can target a file. This method figures out if the

@@ -43,9 +43,10 @@ Object.subclass('lively.ast.AcornInterpreter.Interpreter',
     },
 
     runWithFrame: function(node, frame) {
-        if (node.type == 'FunctionDeclaration' || node.type =='FunctionExpression')
-            node = node.body;
-        return this.runWithFrameAndResult(node, frame, undefined);
+        var isFunction = node.type == 'FunctionDeclaration' || node.type =='FunctionExpression',
+            result = this.runWithFrameAndResult(isFunction ? node.body : node, frame, undefined);
+        if (frame.returnTriggered || !isFunction)
+            return result;
     },
 
     runFromPC: function(frame, lastResult) {
@@ -158,17 +159,20 @@ Object.subclass('lively.ast.AcornInterpreter.Interpreter',
             }
         }
         if (isNew) {
-            if (this.isNative(func)) return new func();
+            function construct(constructor, args) {
+                function F() {
+                    return constructor.apply(this, args);
+                }
+                F.prototype = constructor.prototype;
+                return new F();
+            }
+            if (this.isNative(func)) return construct(func, argValues);
             recv = this.newObject(origFunc);
         }
 
         var result = func.apply(recv, argValues);
-        if (isNew) {// && !Object.isObject(result)) {
-            // FIXME: Cannot distinguish real result from (accidental) last result
-            //        which might also be an object but which should not be returned
-            // 13.2.2 ECMA-262 3rd. Edition Specification
+        if (isNew && !Object.isObject(result))
             return recv;
-        }
         return result;
     },
 
@@ -792,6 +796,19 @@ Object.subclass('lively.ast.AcornInterpreter.Interpreter',
             } else
                 throw new Error('Delete not yet implemented for ' + node.type + '!');
             return;
+        } else if (node.operator == 'typeof') {
+            try {
+                this.accept(node.argument, state);
+                state.result = typeof state.result;
+            } catch(e) {
+                var ex = (lively.Config.get('loadRewrittenCode') && (e instanceof UnwindException)) ?
+                            e.error : e;
+                if (ex instanceof ReferenceError)
+                    state.result = 'undefined';
+                else
+                    throw e;
+            }
+            return;
         }
 
         this.accept(node.argument, state);
@@ -800,7 +817,6 @@ Object.subclass('lively.ast.AcornInterpreter.Interpreter',
             case '+':       state.result = +state.result; break;
             case '!':       state.result = !state.result; break;
             case '~':       state.result = ~state.result; break;
-            case 'typeof':  state.result = typeof state.result; break;
             case 'void':    state.result = void state.result; break; // or undefined?
             default: throw new Error('No semantics for UnaryExpression with ' + node.operator + ' operator!');
         }
@@ -1167,12 +1183,12 @@ Object.subclass('lively.ast.AcornInterpreter.Scope',
         this.parentScope = parentScope || null;
     },
 
-	copy: function() {
+    copy: function() {
         return new this.constructor(
             Object.extend({}, this.mapping),
             this.parentScope ? this.parentScope.copy() : null
         );
-	}
+    }
 
 },
 'accessing', {
@@ -1240,7 +1256,24 @@ Object.extend(lively.ast.AcornInterpreter.Scope, {
             frameState = frameState == Global ? null : frameState[2];
         } while (frameState);
         return topScope;
-    }
+    },
+
+    varMappingOfFrameState: function(frameState) {
+      return this.varMapping(this.recreateFromFrameState(frameState));
+    },
+
+    varMapping: function(scope) {
+      // takes a scope instance and returns a simple JS obj (map) that
+      // represents the var names / values captured in scope
+
+      return lively.lang.obj.merge.apply(null,
+        scopes(scope).invoke("getMapping").reverse());
+
+      function scopes(scope) {
+        return [scope].concat(scope.parentScope ?
+          scopes(scope.parentScope) : []);
+      }
+    },
 
 });
 

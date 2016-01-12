@@ -41,9 +41,9 @@ Object.subclass('lively.morphic.Morph',
         // FIXME implement
         return {}
     },
-    shapeContainsPoint: function(pt) {
+    shapeContainsPoint: function(localPt) {
         // Need to check for non-rectangular shapes
-        return this.shape.reallyContainsPoint(pt)
+        return this.shape.reallyContainsPoint(localPt);
     }
 
 },
@@ -68,12 +68,16 @@ Object.subclass('lively.morphic.Morph',
         return this.morphicSetter('Scale', value);
     },
     getScale: function() { return this.morphicGetter('Scale') || 1 },
+
     setBounds: function(bounds) {
         this.setPosition(bounds.topLeft().addPt(this.getOrigin()));
         this.setExtent(bounds.extent());
         return bounds;
     },
-    getBounds: function() {
+
+    getBounds: function() { return this.bounds(); },
+
+    bounds: function() {
         if (this.cachedBounds && !this.hasFixedPosition()) return this.cachedBounds;
 
         var tfm = this.getTransform(),
@@ -84,16 +88,22 @@ Object.subclass('lively.morphic.Morph',
         if (!this.isClip()) {
             var subBounds = this.submorphBounds(tfm);
             if (subBounds) bounds = bounds.union(subBounds);
+        } else {
+          var scroll = this.getScroll();
+          bounds = bounds.translatedBy(pt(scroll[0], scroll[1]));
         }
 
         return this.cachedBounds = bounds;
     },
+
+    innerBounds: function() { return this.shape.bounds() },
+
     globalBounds: function() {
         return this.owner ?
-            this.owner.getGlobalTransform().transformRectToRect(this.bounds()) : this.bounds();
+            this.owner.getGlobalTransform().transformRectToRect(this.bounds()) :
+            this.bounds();
     },
 
-    innerBounds: function() { return this.shape.getBounds() },
     setVisible: function(bool) { return this.morphicSetter('Visible', bool)  },
     isVisible: function() {
         var v = this.morphicGetter('Visible')
@@ -112,6 +122,7 @@ Object.subclass('lively.morphic.Morph',
     adjustOrigin: function(newOrigin, moveSubmorphs) {
         // changes the origin / pivot of the morph by offsetting the shape
         // without changing the morph's or submorphs' position on the screen
+        if (this.getOrigin().eqPt(newOrigin)) return;
         var oldOrigin            = this.getOrigin(),
             delta                = newOrigin.subPt(oldOrigin),
             transform            = this.getTransform(),
@@ -125,7 +136,12 @@ Object.subclass('lively.morphic.Morph',
 
         this.shape.setPosition(newOrigin.negated());
         if (moveSubmorphs) return;
-        this.submorphs.forEach(function (ea) {ea.moveBy(transformedDelta.negated())});
+        this.submorphs.forEach(function (ea) {
+          var oldO = ea.getTransform().transformPoint(oldOrigin),
+              newO = ea.getTransform().transformPoint(newOrigin),
+              delta = newO.subPt(oldO);
+          ea.moveBy(delta.negated());
+        });
     },
     getOrigin: function() { return this.shape.getPosition().negated() },
     setPivotPoint: function(value) {
@@ -154,9 +170,28 @@ Object.subclass('lively.morphic.Morph',
         // s-resize, sw-resize, w-resize, nw-resize, text, wait, help, progress
          return this.morphicSetter('HandStyle', styleName)
     },
-	getHandStyle: function(styleName) { return this.morphicGetter('HandStyle') },
+
+  	getHandStyle: function(styleName) { return this.morphicGetter('HandStyle') },
+
     setToolTip: function(string) { return this.morphicSetter('ToolTip', string) },
     getToolTip: function() { return this.morphicGetter('ToolTip') }
+},
+'geometry', {
+
+    moveBy: function(point) { this.setPosition(this.getPosition().addPt(point)); },
+    translateBy: function(p) { this.setPosition(this.getPosition().addPt(p)); return this; },
+    align: function (p1, p2) { return this.translateBy(p2.subPt(p1)); },
+    centerAt: function (p) { return this.align(this.bounds().center(), p); },
+    rotateBy: function(delta) { this.setRotation(this.getRotation() + delta); return this; },
+    scaleBy: function(factor) { this.setScale(this.getScale()*factor); },
+    centerAt: function(p) { return this.align(this.bounds().center(), p); },
+    getCenter:  function () { return this.bounds().center(); },
+    resizeBy: function(point) { this.setExtent(this.getExtent().addPt(point)); },
+    width: function() { return this.getExtent().x; },
+    setWidth: function(w) { return this.setExtent(this.getExtent().withX(w)); },
+    height: function() { return this.getExtent().y; },
+    setHeight: function(h) { return this.setExtent(this.getExtent().withY(h)); }
+
 },
 'accessing -- shape properties', {
     setExtent: function(newExtent) {
@@ -183,7 +218,7 @@ Object.subclass('lively.morphic.Morph',
     getFill: function() { return this.shape.getFill() },
     setBorderColor: function(value) { return this.shape.setBorderColor(value) },
     getBorderColor: function() { return this.shape.getBorderColor() },
-    setBorderWidth: function(value) { return this.shape.setBorderWidth(value) },
+    setBorderWidth: function(value) { return this.shape.setBorderWidth(parseInt(value)) },
     getMinExtent:function () {
         return this.minExtent || pt(0,0);
     },
@@ -198,7 +233,7 @@ Object.subclass('lively.morphic.Morph',
     setStrokeWidth: function(newWidth) {
         // This protocol is used for rectangles masquerading as lines
         var oldWidth = this.getStrokeWidth();
-        var newShapeBounds = this.shape.getBounds().insetByPt(pt(0, (oldWidth-newWidth)/2));
+        var newShapeBounds = this.shape.bounds().insetByPt(pt(0, (oldWidth-newWidth)/2));
         this.shape.setBounds(newShapeBounds);
     },
     getStrokeWidth: function() {
@@ -293,6 +328,13 @@ Object.subclass('lively.morphic.Morph',
         return morph;
     },
 
+    addMorphBack: function(other) {
+        var next = other === this.submorphs[0] ? this.submorphs[1] : this.submorphs[0];
+        return this.addMorph(other, next);
+    },
+
+    addMorphFront: function(other) { return this.addMorph(other); },
+
     withAllSubmorphsDo: function(func, context, depth) {
         if (!depth) depth = 0;
         var result = [func.call(context || Global, this, depth)];
@@ -335,13 +377,14 @@ Object.subclass('lively.morphic.Morph',
     },
 
     getMorphById: function(id) {
-        return this.withAllSubmorphsDetect(function(morph) { return morph.id === id; });
+        return $world.withAllSubmorphsDetect(function(morph) { return morph.id === id; });
     },
 
     submorphBounds: function(tfm) {
+        tfm = tfm || this.getTransform();
         var subBounds;
         for (var i = 0; i < this.submorphs.length; i++) {
-            var morphBounds = this.submorphs[i].getBounds();
+            var morphBounds = this.submorphs[i].bounds();
             subBounds = subBounds ? subBounds.union(morphBounds) : morphBounds;
         }
         return subBounds ? tfm.transformRectToRect(subBounds) : null;
@@ -379,6 +422,25 @@ Object.subclass('lively.morphic.Morph',
         // This method well get called when my direct or any of my indirect(!)
         // owners changes, i.e. I or any of my parents is added or removed to/
         // from another morph. On remove newOwner will be null.
+    },
+
+    isSubmorphOf: function(otherMorph) {
+        return otherMorph.withAllSubmorphsDetect(
+          function(morph) { return morph === this }, this);
+    },
+
+    topSubmorph: function() {
+        // the morph on top is the last one in the list
+        return this.submorphs.last();
+    },
+
+    ownerChain: function() {
+        var owners = [], morph = this;
+        while (morph.owner) {
+            owners.push(morph.owner)
+            morph = morph.owner;
+        }
+        return owners;
     }
 
 },
@@ -413,8 +475,9 @@ Object.subclass('lively.morphic.Morph',
             this.getLayouter().onSubmorphRemoved(this, morph, this.submorphs);
         }
         this.renderContextDispatch('removeMorph');
-    }
+    },
 
+    removeAllMorphs: function() { this.submorphs.invoke('remove'); }
 },
 'morph replacement', {
 
@@ -431,11 +494,10 @@ Object.subclass('lively.morphic.Morph',
     },
 
     swapWith: function(morph2) {
-      var morph1 = this;
-
-      var owner1 = morph1.owner, idx1 = owner1.submorphs.indexOf(morph1),
-          next1 = owner1.submorphs[idx1+1], pos1 = morph1.bounds().center();
-      var owner2 = morph2.owner, idx2 = owner2.submorphs.indexOf(morph2),
+      var morph1 = this,
+          owner1 = morph1.owner, idx1 = owner1.submorphs.indexOf(morph1),
+          next1 = owner1.submorphs[idx1+1], pos1 = morph1.bounds().center(),
+          owner2 = morph2.owner, idx2 = owner2.submorphs.indexOf(morph2),
           next2 = owner2.submorphs[idx2+1], pos2 = morph2.bounds().center();
       morph1.align(pos1, pos2);
       morph2.align(pos2, pos1);
@@ -447,21 +509,25 @@ Object.subclass('lively.morphic.Morph',
 
 },
 'transformation', {
+
     localize: function(point) {
         // map world point to local coordinates
         var world = this.world();
         if (!world) return point;
         return point.matrixTransform(world.transformToMorph(this));
     },
+
     transformToMorph: function(other) {
         var tfm = this.getGlobalTransform(),
             inv = other.getGlobalTransform().inverse();
         tfm.preConcatenate(inv);
         return tfm;
     },
+
     transformForNewOwner: function(newOwner) {
         return new lively.morphic.Similitude(this.transformToMorph(newOwner));
     },
+
     localizePointFrom: function(pt, otherMorph) {
         // map local point to owner coordinates
         try {
@@ -471,6 +537,7 @@ Object.subclass('lively.morphic.Morph',
             return pt;
         }
     },
+
     getGlobalTransform: function() {
         var globalTransform = new lively.morphic.Similitude(),
             world = this.world();
@@ -478,21 +545,22 @@ Object.subclass('lively.morphic.Morph',
             globalTransform.preConcatenate(morph.getTransform());
         return globalTransform;
     },
+
     worldPoint: function(pt) {
         return pt.matrixTransform(this.transformToMorph(this.world()));
     },
+
     getTransform: function () {
         var scale = this.getScale(),
             pos = this.getPosition();
-        if (Object.isNumber(scale)) {
-            scale = pt(scale,scale);
-        }
+        if (Object.isNumber(scale)) scale = pt(scale,scale);
         if (this.isClip()) {
             var scroll = this.getScroll();
             pos = pos.subXY(scroll[0], scroll[1]);
         }
         return new lively.morphic.Similitude(pos, this.getRotation(), scale);
     },
+
     setTransform: function(tfm) {
         this.setPosition(tfm.getTranslation());
         this.setRotation(tfm.getRotation().toRadians());
@@ -502,12 +570,15 @@ Object.subclass('lively.morphic.Morph',
     fullContainsWorldPoint: function(p) { // p is in world coordinates
         return this.fullContainsPoint(this.owner == null ? p : this.owner.localize(p));
     },
+
     fullContainsPoint: function(p) { // p is in owner coordinates
-        return this.getBounds().containsPoint(p);
+        return this.bounds().containsPoint(p);
     },
+
     innerBoundsContainsWorldPoint: function(p) { // p is in world coordinates
         return this.innerBoundsContainsPoint(this.owner == null ? p : this.localize(p));
     },
+
     innerBoundsContainsPoint: function(p) { return this.innerBounds().containsPoint(p);  }
 },
 'prototypical scripting', {
@@ -661,9 +732,15 @@ Object.subclass('lively.morphic.Morph',
 
         if (spec.lock !== undefined) this[spec.lock ? 'lock' : 'unlock']();
 
+        if (spec.name !== undefined) this.setName(spec.name);
+
         if (spec.cssStylingMode !== undefined) { // enable disable styling through css
-            this.setBorderStylingMode(spec.cssStyling);
-            this.setAppearanceStylingMode(spec.cssStyling);
+            this.setBorderStylingMode(spec.cssStylingMode);
+            this.setAppearanceStylingMode(spec.cssStylingMode);
+        }
+
+        if (spec.styleSheet !== undefined) { // enable disable styling through css
+            this.setStyleSheet(spec.styleSheet);
         }
 
         if (spec.resizeWidth !== undefined || spec.resizeHeight !== undefined || spec.moveVertical !== undefined || spec.moveHorizontal !== undefined || spec.adjustForNewBounds !== undefined || spec.scaleHorizontal !== undefined || spec.scaleVertical !== undefined || spec.centeredVertical !== undefined || spec.centeredHorizontal !== undefined || spec.scaleProportional !== undefined) {
@@ -714,6 +791,7 @@ Object.subclass('lively.morphic.Morph',
         return lively.$(this.jQueryNode());
     }
 });
+
 lively.morphic.Morph.subclass('lively.morphic.World',
 'properties', {
     style: {
@@ -724,7 +802,7 @@ lively.morphic.Morph.subclass('lively.morphic.World',
         enableDragging: true
     },
     metaTags: [
-        {name: "apple-mobile-web-app-capable", content: "yes"}], 
+        {name: "apple-mobile-web-app-capable", content: "yes"}],
     linkTags: [
         {rel: 'shortcut icon', href: 'core/media/lively.ico'},
         {rel: 'apple-touch-icon-precomposed', href: 'core/media/apple-touch-icon.png'}],
@@ -807,12 +885,13 @@ lively.morphic.Morph.subclass('lively.morphic.World',
     getMetaTags: function() {
         // append our own metaTags to the class's metaTags
         var allTags = Object.mergePropertyInHierarchy(this, 'metaTags');
-        // ... but make sure each only occurs once
-        var occurrences = {};
-        allTags.forEach(function(each) {
-            occurrences[each.name] = (occurrences[each.name] || 0) + 1});
-        return allTags.select(function(each) {
-            return occurrences[each.name]-- == 1});
+
+        // ensure only one tag of a type is present
+        return allTags.uniqBy(function(a,b) {
+          if (("name" in a) && ("name" in b) && a == b) return true;
+          if (("property" in a) && ("property" in b) && a == b) return true;
+          return false;
+        });
     },
 
     getLinkTags: function() {
@@ -892,11 +971,361 @@ lively.morphic.Morph.subclass('lively.morphic.Box',
     }
 });
 
-lively.morphic.Box.subclass('lively.morphic.Clip',
+lively.morphic.Morph.subclass('lively.morphic.Path',
+'properties', {
+    isPath: true,
+    style: {
+        borderWidth: 1, borderColor: Color.black
+    },
+    isPolygon: function(){return (this.vertices().length>2 && this.vertices().first().equals(this.vertices().last()));}
+},
 'initializing', {
-    initialize: function($super, initialBounds) {
-        $super(initialBounds);
-        this.applyStyle({clipMode: 'scroll'});
+    initialize: function($super, vertices) {
+        var shape = this.defaultShape(null, vertices);
+        $super(shape);
+    },
+    defaultShape: function(bounds, vertices) {
+        return new lively.morphic.Shapes.Path(vertices || [pt(0,0)]);
+    }
+},
+'accessing', {
+    vertices: function() { return this.shape.vertices() },
+     setExtent: function(newExt){
+       
+      var oldExt = this.getExtent();
+      var originPos = this.getOrigin();
+      var xRatio = newExt.x/oldExt.x;
+      var yRatio = newExt.y/oldExt.y;
+      this.setOrigin(pt(0,0));
+      var newVerts = [];
+      this.vertices().forEach(function(ea){
+          var newPt = pt(ea.x*xRatio,ea.y*yRatio);
+          newVerts.push(newPt);
+      });
+      this.setVertices(newVerts);
+      this.cachedBounds = null;
+      this.setOrigin(originPos);
+  },
+},
+'vertex and control point computations', {
+    pathBetweenRects: function(rect1, rect2) {
+        // copied and adpated from graffle Raphael 1.2.1 - JavaScript Vector Library
+        var p = [{x: rect1.x + rect1.width / 2, y: rect1.y - 1},
+            {x: rect1.x + rect1.width / 2, y: rect1.y + rect1.height + 1},
+            {x: rect1.x - 1, y: rect1.y + rect1.height / 2},
+            {x: rect1.x + rect1.width + 1, y: rect1.y + rect1.height / 2},
+            {x: rect2.x + rect2.width / 2, y: rect2.y - 1},
+            {x: rect2.x + rect2.width / 2, y: rect2.y + rect2.height + 1},
+            {x: rect2.x - 1, y: rect2.y + rect2.height / 2},
+            {x: rect2.x + rect2.width + 1, y: rect2.y + rect2.height / 2}];
+        var d = {}, dis = [];
+        for (var i = 0; i < 4; i++) {
+            for (var j = 4; j < 8; j++) {
+                var dx = Math.abs(p[i].x - p[j].x),
+                    dy = Math.abs(p[i].y - p[j].y);
+                if ((i == j - 4) || (((i != 3 && j != 6) ||
+                    p[i].x < p[j].x) && ((i != 2 && j != 7) || p[i].x > p[j].x) && ((i != 0 && j != 5) ||
+                    p[i].y > p[j].y) && ((i != 1 && j != 4) || p[i].y < p[j].y))) {
+                        dis.push(dx + dy);
+                        d[dis[dis.length - 1]] = [i, j];
+                }
+            }
+        }
+        var res = dis.length == 0 ? [0, 4] : d[Math.min.apply(Math, dis)];
+
+        var x1 = p[res[0]].x,
+            y1 = p[res[0]].y,
+            x4 = p[res[1]].x,
+            y4 = p[res[1]].y,
+            dx = Math.max(Math.abs(x1 - x4) / 2, 10),
+            dy = Math.max(Math.abs(y1 - y4) / 2, 10),
+            x2 = [x1, x1, x1 - dx, x1 + dx][res[0]].toFixed(3),
+            y2 = [y1 - dy, y1 + dy, y1, y1][res[0]].toFixed(3),
+            x3 = [0, 0, 0, 0, x4, x4, x4 - dx, x4 + dx][res[1]].toFixed(3),
+            y3 = [0, 0, 0, 0, y1 + dy, y1 - dy, y4, y4][res[1]].toFixed(3);
+
+        var p1 = this.localize(pt(x1, y1)),
+            c1 = this.localize(pt(x2, y2)),
+            c2 = this.localize(pt(x3, y3)),
+            p2 = this.localize(pt(x4, y4));
+
+        return [p1, c1, c2, p2];
+    }
+},
+'arrow behavior', {
+    addArrowHeadStart: function(morph) {
+        var ctrlPt = this.getControlPoints().first();
+        this.addMorph(morph);
+        ctrlPt.addMarker(morph, 'next');
+        return morph;
+    },
+    addArrowHeadEnd: function(morph) {
+        var ctrlPt = this.getControlPoints().last();
+        this.addMorph(morph);
+        ctrlPt.addMarker(morph, 'prev')
+        return morph;
+    },
+    createArrow: function() {
+        var arrowHead = new lively.morphic.Path([pt(0,0), pt(0,12), pt(16,6), pt(0,0)]);
+        arrowHead.applyStyle({borderWidth: 0, borderColor: Color.black, fill: Color.black})
+        arrowHead.adjustOrigin(pt(12,6))
+        return arrowHead;
+    },
+    createArrowHeadStart: function() {
+        return this.addArrowHeadStart(this.createArrow());
+    },
+    createArrowHeadEnd: function() {
+        return this.addArrowHeadEnd(this.createArrow());
+    }
+},
+'control points', {
+    getControlPoint: function(idx) { return this.getControlPoints()[idx] },
+    getControlPoints: function() {
+        var vertices = this.vertices();
+        if (!this.controlPoints) this.controlPoints = [];
+        if (vertices.length !== this.controlPoints.length)
+            this.controlPoints = this.vertices().collect(function(p, i) {
+                return this.controlPoints[i] || new lively.morphic.ControlPoint(this, i);
+            }, this);
+        return this.controlPoints;
+    },
+    insertControlPointBetween: function(index1, index2, vertex) {
+        var ctrlP1 = this.getControlPoint(index1);
+        ctrlP1.insertAfter(vertex);
+        this.cachedBounds = null;
+    }
+},
+'conversion', {
+    convertToCurve: function() {
+        var ctrlPoints = this.getControlPoints();
+        for (var i = 1; i < ctrlPoints.length; i++) {
+            var ctrlPt = ctrlPoints[i], prev = ctrlPoints[i-1];
+            if (ctrlPt.isCurve()) continue;
+            var prevPos = prev.getPos(),
+                currentPos = ctrlPt.getPos(),
+                ptArr = this.pathBetweenRects(
+                    new Rectangle(prevPos.x,prevPos.y,0,0),
+                    new Rectangle(currentPos.x,currentPos.y,0,0)),
+                c1 = ptArr[1],
+                c2 = ptArr[2],
+                p = ptArr[3];
+            ctrlPt.toCurve(p, c1, c2);
+        }
+        this.cachedBounds = null;
+    },
+    convertToLine: function() {
+        this.getControlPoints().forEach(function(ea) { return ea.toLine(ea.getPos()) });
+        this.cachedBounds = null;
+    }
+},
+'menu', {
+    morphMenuItems: function($super) {
+        var items = $super();
+        items.push(['to curve', this.convertToCurve.bind(this)]);
+        items.push(['to line', this.convertToLine.bind(this)]);
+
+        var propItems = items.detect(function(subItem) {
+            return subItem[0].match(/morphic.*properties/i)
+        });
+
+        var haloItemsEnabled = this.areControlPointHalosEnabled()
+        propItems[1].push([
+            (haloItemsEnabled ? "Disable" : "Enable")
+                + " halo items for control points", function() {
+                    this.setControlPointHalosEnabled(!haloItemsEnabled);
+                }.bind(this)]);
+
+        return items;
+    },
+    adjustOrigin: function($super, newOrigin) {
+        var oldOrigin = this.getOrigin();
+        $super(newOrigin);
+        var newVertices = this.vertices().map(function(ea) {
+            return ea.subPt(newOrigin.subPt(oldOrigin)); });
+        this.shape.setVertices(newVertices);
+    }
+
+},
+'events', {
+    onMouseUp: function($super, evt) {
+        if (evt.isCommandKey() || evt.isRightMouseButtonDown())
+            return $super(evt);
+
+        this.showControlPointsHalos();
+        return false;
+    }
+});
+
+Object.subclass('lively.morphic.ControlPoint',
+'initializing', {
+    initialize: function(morph, index) {
+        this.morph = morph;
+        this.index = index || 0;
+    },
+    create: function() {
+        return new lively.morphic.ControlPoint(this.morph)
+    }
+},
+'updating', {
+    signalChange: function() {
+        this.reactToChange();
+        var next = this.next();
+        next && next.reactToChange();
+        var prev = this.prev();
+        prev && prev.reactToChange();
+    },
+    reactToChange: function() {
+        this.alignMarker();
+    },
+    elementChanged: function() {
+        this.morph.shape.setPathElements(this.morph.shape.getPathElements());
+        this.morph.cachedBounds = null;
+    }
+
+},
+'testing', {
+    isFirst: function() { return this.index === 0 },
+    isLast: function() { return this.morph.controlPoints.length === this.index+1 },
+    isCurve: function() {
+        var e = this.getElement();
+        return e ? e.charCode == 'Q' || e.charCode == 'C' || e.charCode == 'S' : false;
+    }
+},
+'accessing', {
+    getMorph: function() { return this.morph },
+    getPos: function() {
+        var width = this.morph.getBorderWidth() * 2;
+        return this.morph.vertices()[this.index] || pt(0,0)//.addXY(width,width)
+    },
+    getGlobalPos: function() {
+        return this.morph.world() ? this.morph.worldPoint(this.getPos()) : this.getPos()
+     },
+    next: function() { return this.getMorph().getControlPoint(this.index+1) },
+    prev: function() { return this.getMorph().getControlPoint(this.index-1) },
+    getElement: function() { return this.morph.shape.getPathElements()[this.index] },
+    setElement: function(element) {
+        var elements = this.morph.shape.getPathElements();
+        elements.replaceAt(element, this.index);
+        this.morph.shape.setPathElements(elements);
+    }
+},
+'enumerating', {
+    withNextControlPointsDo: function(func) {
+        var ctrlPts = this.morph.controlPoints;
+        var nexts = ctrlPts.slice(this.index+1, ctrlPts.length);
+        nexts.forEach(func);
+    },
+    controlPointsFromTo: function(start, end) {
+        var ctrlPts = this.morph.controlPoints;
+        return ctrlPts.slice(start || 0, end || ctrlPts.length);
+    },
+
+},
+'manipulation', {
+    moveBy: function(p) {
+        var element = this.getElement();
+        if (!element) return;
+        var isPolygon = this.getMorph().isPolygon();
+        element.translatePt(p);
+        this.elementChanged();
+        this.signalChange();
+        // fix for moving first & last cp of a polygon
+        var other;
+        if(this.isFirst())
+          other = this.getMorph().controlPoints.last();
+        if(this.isLast())
+          other = this.getMorph().controlPoints.first();
+        if(isPolygon && other)
+          other.moveBy(p);
+    },
+    setPos: function(p) {
+        this.moveBy(p.subPt(this.getPos()))
+    },
+    setGlobalPos: function(p) {
+        this.setPos(this.morph.localize(p));
+    },
+
+    insertAfter: function(pos) {
+        var next = this.create();
+        return next.insertAt(this.index+1, pos);
+    },
+
+    insertAt: function(index, pos) {
+        this.index = index;
+
+        var isCurve = this.isFirst() ? this.next().isCurve() : this.isCurve();
+
+        // update ctrl points
+        this.controlPointsFromTo(this.index).forEach(function(ea) { ea.index++ });
+        var newCtrlPt = this.morph.controlPoints.pushAt(this, this.index);
+
+        // update vertices
+        var vertices = this.morph.vertices()
+        vertices.pushAt(pos, this.index);
+        this.morph.setVertices(vertices);
+
+
+        if (isCurve) this.controlPointsFromTo(this.index).forEach(function(ea) { ea.toCurve() });
+
+        this.signalChange();
+
+        return this
+    },
+
+    mergeWithNext: function() {
+        var next = this.next();
+        next && next.remove();
+    }
+},
+'removing', {
+    remove: function() {
+        this.controlPointsFromTo(this.index+1).forEach(function(ea) { ea.index-- });
+
+        var vertices = this.morph.vertices();
+        vertices.removeAt(this.index);
+        this.morph.setVertices(vertices);
+
+        var ctrlPts = this.morph.controlPoints;
+        ctrlPts.removeAt(this.index);
+        ctrlPts[this.index] && ctrlPts[this.index].signalChange();
+    },
+
+},
+'conversion', {
+    asHalo: function() { return new lively.morphic.PathVertexControlPointHalo(this) },
+    toCurve: function(p, c1, c2) {
+        if (this.isFirst()) return;
+        this.setElement(new lively.morphic.Shapes.CurveTo(true, this.getPos().x, this.getPos().y));
+        // this.setElement(new lively.morphic.Shapes.BezierCurve2CtlTo(true, p.x, p.y, c1.x, c1.y, c2.x, c2.y));
+    },
+    toLine: function(p) {
+        if (this.isFirst()) return;
+        this.setElement(new lively.morphic.Shapes.LineTo(true, p.x, p.y));
+    }
+
+},
+'markers', {
+    addMarker: function(morph, direction) {
+        // direction is prev or next
+        this.marker = morph;
+        this.markerDirection = direction || 'prev';
+        this.alignMarker();
+    },
+    detachMarker: function() {
+        this.marker = null;
+        this.markerDirection = null;
+    },
+
+    alignMarker: function() {
+        // we align the marker morph at the position of this ctrl point
+        if (!this.marker) return;
+        if (!this.marker.owner == this.morph) { this.detachMarker(); return; }
+        var pos = this.getPos(),
+            other = this[this.markerDirection](),
+            vector = pos.subPt(other.getPos()),
+            rot = vector.theta();
+        this.marker.setRotation(rot);
+        this.marker.setPosition(pos);
     }
 });
 

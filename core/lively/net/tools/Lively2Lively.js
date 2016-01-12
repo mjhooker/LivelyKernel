@@ -1,4 +1,4 @@
-module('lively.net.tools.Lively2Lively').requires('lively.persistence.BuildSpec', 'lively.net.tools.Functions', 'lively.morphic.tools.FilterableList').toRun(function() {
+module('lively.net.tools.Lively2Lively').requires('lively.persistence.BuildSpec', 'lively.net.tools.Functions', 'lively.morphic.tools.FilterableList', "lively.morphic.tools.MenuBar").toRun(function() {
 
 Object.extend(lively.net.tools.Lively2Lively, {
 
@@ -79,7 +79,11 @@ Object.extend(lively.net.tools.Lively2Lively, {
             j = j + 1;
         }
         return [disconnectedSessions, newSessions];
-    }
+    },
+
+    getMenuBarEntries: function() {
+      return [lively.BuildSpec("lively.net.tools.ConnectionIndicatorMenuBarEntry").createMorph()];
+    },
 });
 
 lively.BuildSpec('lively.net.tools.ConnectionIndicator', {
@@ -482,7 +486,8 @@ lively.BuildSpec('lively.net.tools.Lively2LivelyChat', {
         addText: function addText(string) {
         var messages = this.get('MessageList')
         var y = messages.submorphs.length ? messages.submorphs.last().bounds().bottom() : 0;
-        if (messages.submorphs.last().textString === string) {
+        var lastMessage = messages.submorphs.last();
+        if (lastMessage && lastMessage.textString === string) {
             // UGLY HACK: Muss anders, geht aber jetzt nicht,
             return;
         }
@@ -609,10 +614,10 @@ lively.BuildSpec('lively.net.tools.Lively2LivelyInspector', {
             name: "SessionList",
             connectionRebuilder: function connectionRebuilder() {
                 var connectionToMorphNamedFilterableList = this.get('filter').attributeConnections.find(function(ea) {
-                    return ea.sourceAttrName === 'inputChange'
+                    return ea.sourceAttrName === 'inputChanged';
                 })
                 connectionToMorphNamedFilterableList && connectionToMorphNamedFilterableList.disconnect();
-                lively.bindings.connect(this.get('filter'),"inputChange", this, "inputChange", {})
+                lively.bindings.connect(this.get('filter'),"inputChanged", this, "inputChanged", {});
                 lively.bindings.connect(this.get('list'), "selection", this.get("Lively2LivelyInspector"), "setWorkspaceTarget", {});
             }
         }),{
@@ -762,7 +767,7 @@ lively.BuildSpec('lively.net.tools.Lively2LivelyInspector', {
         updateSessions: function updateSessions() {
             var sessionListMorph = this.get('SessionList'),
                 localSession = lively.net.tools.Functions.getLocalSession();
-    
+
             lively.net.tools.Functions.withSessionsDo(localSession, function(err, sessions) {
                 if (err) {
                     sessionListMorph.setList([]);
@@ -910,7 +915,7 @@ lively.BuildSpec("lively.net.tools.Lively2LivelyWorkspace", {
             onMouseDown: function onMouseDown(evt) {
           if (evt.getTargetMorph() == this.get(/CheckBox/)) return false;
           if (evt.getTargetMorph() == this.get("Label") && this.get("Label").inputAllowed()) return false;
-        
+
           this.setChecked(!this.isChecked());
           evt.stop(); return true;
         },
@@ -989,7 +994,7 @@ lively.BuildSpec("lively.net.tools.Lively2LivelyWorkspace", {
             onMouseDown: function onMouseDown(evt) {
           if (evt.getTargetMorph() == this.get(/CheckBox/)) return false;
           if (evt.getTargetMorph() == this.get("Label") && this.get("Label").inputAllowed()) return false;
-        
+
           this.setChecked(!this.isChecked());
           evt.stop(); return true;
         },
@@ -1056,9 +1061,10 @@ lively.BuildSpec("lively.net.tools.Lively2LivelyWorkspace", {
             var self = this, text = this.getSelectionMaybeInComment();
             function output(msg, isError) {
                 if (printResult) {
-                    self.printObject(editor, msg, false);
+                    // self.printObject(editor, msg, false);
+                    self.printObject(editor, "OK", false);
                 } else {
-                    if (isError) self.setStatusMessage(msg, Global.Color.red);
+                    self.setStatusMessage(msg, isError ? Global.Color.red : null);
                     var sel = self.getSelection();
                     if (sel && sel.isEmpty()) sel.selectLine();
                 }
@@ -1098,7 +1104,7 @@ lively.BuildSpec("lively.net.tools.Lively2LivelyWorkspace", {
                     doFunc(isError, result);
                 });
             });
-        
+
             function processCode(code) {
               return lively.lang.VM.evalCodeTransform(code, {
                 topLevelVarRecorder: {},
@@ -1132,25 +1138,25 @@ lively.BuildSpec("lively.net.tools.Lively2LivelyWorkspace", {
         lookForNewerSessionOfSameTarget: function lookForNewerSessionOfSameTarget() {
       // this.startStepping(2000, 'lookForNewerSessionOfSameTarget');
       // this.stopStepping();
-    
+
       // if enabled, we will try to connect to a newer session of the same user / worldURL combo
       if (!this.get("autoConnectToNewerSession").isChecked() || !this._targetSession) return;
-    
+
       var self = this, userName = this._targetSession.user, url = this._targetSession.worldURL;
       var forceUpdate = this.get("forceRefreshCheckBox").isChecked();
-    
+
       withLastActiveSessionOfUserDo(userName, url, function(err, targetSession) {
         if (!targetSession) return;
         self._targetSession = targetSession;
     // show(targetSession)
         lively.bindings.signal(self, "sessionChanged", targetSession);
       });
-    
-    
+
+
       // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-    
+
       function withLastActiveSessionOfUserDo(username, url, thenDo) {
-        var localSession = lively.net.SessionTracker.getSession();  
+        var localSession = lively.net.SessionTracker.getSession();
         lively.net.tools.Functions.withSessionsDo(localSession, function(err, sessions) {
           if (err) return show(err.stack || String(err));
           thenDo(null, sessions.filter(function(s) {
@@ -1172,22 +1178,145 @@ lively.BuildSpec("lively.net.tools.Lively2LivelyWorkspace", {
     },
         reset: function reset() {
       lively.bindings.connect(this.get("sessionChooseButton"), 'fire', this, 'interactivelyChooseSession');
-    
+
       lively.bindings.connect(this, 'sessionChanged', this, 'updateFromTargetSession');
       this.doNotSerialize = ["_targetSession"];
-      
+
       this.get('editor').textString = '// code in here is evaluated in the context of the connected session\n';
     },
         updateFromTargetSession: function updateFromTargetSession() {
         var s = this._targetSession;
         if (s) this.get("sessionChooseButton").setLabel(Strings.format("%s - %s (%s)", s.worldURL, s.user,lively.lang.date.relativeTo(new Date(s.lastActivity), new Date())));
         else this.get("sessionChooseButton").setLabel("No session selected");
-    
+
     },
         withTargetSession: function withTargetSession(func) {
         func.call(null, null, this._targetSession);
     }
     }],
     titleBar: "Lively2LivelyWorkspace"
-})
-}) // end of module
+});
+
+lively.BuildSpec("lively.net.tools.ConnectionIndicatorMenuBarEntry", lively.BuildSpec("lively.morphic.tools.MenuBarEntry").customize({
+
+  name: "lively2livelyStatusLabel",
+  menuBarAlign: "right",
+  changeColorForMenu: false,
+
+  style: lively.lang.obj.merge(lively.BuildSpec("lively.morphic.tools.MenuBarEntry").attributeStore.style, {
+    extent: lively.pt(130,20),
+    textColor: Color.rgb(127,230,127),
+    toolTip: "Shows the connection status to the cloxp (Lively) server environment. If the indicator is red this means that the server currently cannot be reached."
+  }),
+
+  morphMenuItems: function morphMenuItems() {
+    var self = this,
+        items = [],
+        isConnected = lively.net.SessionTracker.isConnected(),
+        allowRemoteEval = !!lively.Config.get('lively2livelyAllowRemoteEval');
+
+    var livelyItems = [
+        ['show login info', function() { lively.net.Wiki.showLoginInfo(); }],
+    ];
+
+    if (!isConnected) {
+      return livelyItems.concat([
+        ['connect', function() {
+            lively.net.SessionTracker.resetSession();
+            self.update.bind(self).delay(0.2);
+        }]
+      ]);
+    } else {
+      return livelyItems.concat([
+        ['open chat...', function() {
+            if ($morph('Lively2LivelyChat'))
+                $morph('Lively2LivelyChat').openInWorldCenter().comeForward();
+            else
+                lively.BuildSpec('lively.net.tools.Lively2LivelyChat').createMorph().openInWorldCenter();
+        }],
+        ['[' + (allowRemoteEval ? 'x' : ' ') + '] allow remote eval', function() {
+            lively.Config.set('lively2livelyAllowRemoteEval', !allowRemoteEval);
+        }],
+        ['reset connection', function() {
+            lively.net.SessionTracker.resetSession();
+        }],
+        ['disconnect', function() {
+            lively.net.SessionTracker.closeSessions();
+            self.update.bind(self).delay(0.2);
+        }]
+      ]);
+    }
+
+  },
+
+  // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+  messageReceived: function messageReceived(msgAndSession) {
+    var msg = msgAndSession.message, s = msgAndSession.session;
+    if (msg.action === 'remoteEvalRequest') {
+        msg = Strings.format(
+            'got %s\n%s\n from %s',
+            msg.action,
+            msg.data.expr.replace(/\n/g, '').truncate(100),
+            msg.sender);
+        $world.setStatusMessage(msg, Color.gray);
+    }
+  },
+
+  onConnect: function onConnect(session) {
+    if (!this.informsAboutMessages && lively.Config.get('lively2livelyInformAboutReceivedMessages')) {
+        var self = this;
+        function onClose() {
+            self.informsAboutMessages = false;
+            lively.bindings.disconnect(session, 'message', self, 'messageReceived');
+            lively.bindings.disconnect(session, 'sessionClosed', onClose, 'call');
+        }
+        this.informsAboutMessages = true;
+        lively.bindings.connect(session, 'message', this, 'messageReceived');
+        lively.bindings.connect(session, 'sessionClosed', onClose, 'messageReceived');
+    }
+    this.applyStyle({
+      fill: Global.Color.green,
+      textColor: Global.Color.white
+    });
+    this.textString = '[l2l] connected';
+  },
+
+  onConnecting: function onConnecting(session) {
+    this.informsAboutMessages = false;
+    this.textString = '[l2l] connecting';
+    this.applyStyle({
+      fill: Global.Color.gray,
+      textColor: Global.Color.white
+    });
+  },
+
+  onDisconnect: function onDisconnect(session) {
+    // this.onDisconnect()
+    this.informsAboutMessages = false;
+    this.textString = '[l2l] disconnected';
+    this.applyStyle({
+      fill: Global.Color.red,
+      textColor: Global.Color.white
+    });
+  },
+
+  update: function update() {
+    var s = lively.net.SessionTracker.getSession();
+    switch (s && s.status()) {
+        case null: case undefined:
+        case 'disconnected': this.onDisconnect(s); break;
+        case 'connected': this.onConnect(s); break;
+        case 'connecting': this.onConnecting(s); break;
+    }
+  },
+
+  onLoad: function onLoad() {
+    (function() { this.update(); }).bind(this).delay(0);
+    this.startStepping(5*1000, 'update');
+    this.onConnecting(null);
+  }
+
+}));
+
+}); // end of module

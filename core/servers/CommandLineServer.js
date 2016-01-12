@@ -51,16 +51,19 @@ function defaultKill(pid, cmd, signal, thenDo) {
     debug && console.log('signal pid %s with', pid, signal);
     signal = signal.toUpperCase().replace(/^SIG/, '');
     exec('kill -s ' + signal + " " + pid, function(code, out, err) {
-        debug && console.log('signl result: ', out, err);
+        debug && console.log('signal result: ', out, err);
         thenDo(code, out, err);
     });
 }
 
 function pkillKill(pid, cmd, signal, thenDo) {
     // signal = "SIGKILL"|"SIGQUIT"|"SIGINT"|...
-    debug && console.log('signal pid %s with', pid, signal);
     signal = signal.toUpperCase().replace(/^SIG/, '');
-    exec(util.format('pkill -%s -P %s; kill -s %s %s', signal, pid, signal, pid), function(code, out, err) {
+    // rk 2015-07-15: properly killing piped processes -- currently this only
+    // works when making the spawned process a group leader
+    var killCmd = util.format('pkill -%s -g $(ps opgid= "%s")', signal, pid);
+    debug && console.log('signal pid %s with %s (%s)', pid, signal, killCmd);
+    exec(killCmd, function(code, out, err) {
         debug && console.log('signal result: ', out, err);
         thenDo(code, out, err);
     });
@@ -80,25 +83,35 @@ var doKill = defaultKill;
 function startSpawn(cmdInstructions) {
     var commandEnv = cmdInstructions.env || {};
     commandEnv.__proto__ = env;
-    var options = {env: commandEnv, cwd: cmdInstructions.cwd || dir, stdio: 'pipe'},
-        command = cmdInstructions.command, args = [],
+    var options = {env: commandEnv, cwd: cmdInstructions.cwd || dir, stdio: 'pipe', detached: true},
+        commandString = cmdInstructions.command,
         stdin = cmdInstructions.stdin;
-    if (typeof command === 'string') {
-        args = command.split(' ');
-    } else if (util.isArray(command)) {
-        args = command;
+    if (util.isArray(command)) {
+        commandString = commandString.join(" ");
+    } else {
+        commandString = String(commandString);
     }
 
     // hmm (variable) expansion seems not to work with spawn
     // as a quick hack do it manually here
-    args = args.map(function(arg) {
-        return arg.replace(/\$[a-zA-Z0-9_]+/g, function(match) {
-            return process.env[match.slice(1,match.length)] || match; }); });
-    command = args.shift();
+    commandString = commandString.replace(/\$[a-zA-Z0-9_]+/g, function(match) {
+      return process.env[match.slice(1,match.length)] || match; });
 
-    if (debug) console.log('Running command: "%s"', [command].concat(args).join(' '));
+    if (!isWindows) {
+      commandString = util.format("source %s/bin/lively.profile; %s", dir, commandString)
+    }
+
+    if (!isWindows) {
+      var command = "/bin/bash",
+          args = ["-c", commandString];
+    } else {
+      var command = "cmd",
+          args = ["/C", commandString];
+    }
+
     var proc = spawn(command, args, options);
     d.add(proc);
+    if (debug) console.log('Running command: "%s" (%s)', [command].concat(args).join(' '), proc.pid);
     if (stdin) {
         debug && console.log('setting stdin to: %s', stdin);
         proc.stdin.end(stdin);
@@ -299,7 +312,7 @@ module.exports = d.bind(function(route, app) {
     });
 
     app.get(route, function(req, res) {
-        res.json({cwd: dir});
+        res.json({platform: process.platform, cwd: dir});
     });
 
     app.delete(route, function(req, res) {
